@@ -1,0 +1,39 @@
+# Data files
+*.csv
+*.parquet
+*.json
+!data/summary.json
+!data/matchup_model_results.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Results
+results_report.html
+*.db
+
+# Logs
+*.log

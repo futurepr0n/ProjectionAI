@@ -1,0 +1,21 @@
+{
+  "key_findings": {
+    "model_auc": 0.6305348875661375,
+    "best_strategy": {
+      "name": "Min Edge 8%",
+      "roi": -71.2,
+      "bets": 718,
+      "win_rate": 0.141
+    },
+    "baseline_improvement": "+28.6% ROI",
+    "top_feature": "pitcher_hr_per_9",
+    "missing_features": [
+      "weather",
+      "travel",
+      "stadium_dimensions",
+      "umpire_bias"
+    ]
+  },
+  "recommendation": "Add missing critical features (Phase 2) before further model tuning",
+  "timestamp": "2026-02-23T10:56:38.587358"
+}

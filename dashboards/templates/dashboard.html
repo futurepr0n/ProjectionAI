@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProjectionAI - HR Prediction Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #3a3a5a;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        h1 {
+            font-size: 2rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .model-stats {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        .stat {
+            background: rgba(255,255,255,0.1);
+            padding: 12px 18px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #667eea;
+        }
+        .stat-value.dynamic {
+            color: #00ff88;
+        }
+        .stat-label {
+            font-size: 0.75rem;
+            color: #aaa;
+            margin-top: 3px;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            align-items: end;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .filter-group label {
+            font-size: 0.8rem;
+            color: #aaa;
+        }
+        .date-input, select {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid #3a3a5a;
+            color: #eee;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 1rem;
+            min-width: 180px;
+        }
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.3s;
+        }
+        .btn:hover { background: #764ba2; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-clear {
+            background: #ff4444;
+        }
+        .btn-clear:hover { background: #cc0000; }
+        
+        .summary-box {
+            background: rgba(0,255,136,0.1);
+            border: 2px solid #00ff88;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .summary-box h3 { margin-bottom: 10px; }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 15px;
+        }
+        .summary-metric { text-align: center; }
+        .summary-metric .value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #00ff88;
+        }
+        .summary-metric .label {
+            font-size: 0.8rem;
+            color: #aaa;
+        }
+        
+        .predictions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 15px;
+        }
+        .prediction-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 15px;
+            border: 2px solid #3a3a5a;
+            transition: all 0.3s;
+        }
+        .prediction-card:hover { transform: translateY(-3px); }
+        .prediction-card.SOLID-BET {
+            border-color: #00ff88;
+            background: rgba(0, 255, 136, 0.1);
+        }
+        .prediction-card.VALUE-PLAY { border-color: #667eea; }
+        .prediction-card.correct { background: rgba(0, 255, 136, 0.2); }
+        .prediction-card.incorrect { opacity: 0.6; }
+        
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 10px;
+        }
+        .player-name { font-size: 1.1rem; font-weight: bold; }
+        .team-info { color: #aaa; font-size: 0.85rem; }
+        .signal-badge {
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-weight: bold;
+            font-size: 0.75rem;
+        }
+        .signal-SOLID-BET { background: #00ff88; color: #000; }
+        .signal-VALUE-PLAY { background: #667eea; color: #fff; }
+        .signal-LONGSHOT { background: #ff4444; color: #fff; }
+        
+        .result-badge {
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-weight: bold;
+            font-size: 0.75rem;
+            margin-left: 8px;
+        }
+        .result-hit { background: #00ff88; color: #000; }
+        .result-miss { background: #ff4444; color: #fff; }
+        
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .metric { text-align: center; }
+        .metric .value { font-size: 1.2rem; font-weight: bold; }
+        .metric .label { font-size: 0.7rem; color: #aaa; }
+        .positive { color: #00ff88; }
+        .negative { color: #ff4444; }
+        
+        .section { margin: 30px 0; }
+        .section h2 { margin-bottom: 15px; font-size: 1.3rem; }
+        
+        .loading { text-align: center; padding: 40px; color: #aaa; }
+        .error { color: #ff4444; padding: 20px; }
+        
+        .dates-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: rgba(0,0,0,0.2);
+            border-radius: 8px;
+            padding: 10px;
+        }
+        .date-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-radius: 6px;
+            margin-bottom: 5px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .date-item:hover { background: rgba(255,255,255,0.1); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>🎸 ProjectionAI</h1>
+                <p style="color: #aaa;">HR Prediction System - XGBoost</p>
+            </div>
+            <div class="model-stats">
+                <div class="stat">
+                    <div class="stat-value">0.9458</div>
+                    <div class="stat-label">ROC-AUC</div>
+                </div>
+                <div class="stat" id="dynamic-picks-stat">
+                    <div class="stat-value dynamic">Loading...</div>
+                    <div class="stat-label">Picks</div>
+                </div>
+                <div class="stat" id="dynamic-hitrate-stat">
+                    <div class="stat-value dynamic">Loading...</div>
+                    <div class="stat-label">Hit Rate</div>
+                </div>
+                <div class="stat" id="dynamic-roi-stat">
+                    <div class="stat-value dynamic">Loading...</div>
+                    <div class="stat-label">ROI</div>
+                </div>
+            </div>
+        </header>
+
+        <div class="controls">
+            <div class="filter-group">
+                <label>Date:</label>
+                <select id="date-select" class="date-input">
+                    <option value="">Loading dates...</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Classification:</label>
+                <select id="filter-classification" onchange="applyFilters()">
+                    <option value="">All Types</option>
+                    <option value="Solid Bet" selected>Solid Bet</option>
+                    <option value="Value Play">Value Play</option>
+                    <option value="Longshot">Longshot</option>
+                </select>
+            </div>
+            <button class="btn" id="load-btn" onclick="loadPredictions()">Load Predictions</button>
+            <button class="btn btn-clear" onclick="clearFilters()">Clear Filters</button>
+            <button class="btn" onclick="showAllDates()">View All Dates</button>
+        </div>
+
+        <div id="summary-box" class="summary-box" style="display: none;">
+            <h3>📊 Results Summary for <span id="summary-date"></span> <span id="summary-filter"></span></h3>
+            <div class="summary-grid">
+                <div class="summary-metric">
+                    <div class="value" id="sum-total">-</div>
+                    <div class="label">Total Picks</div>
+                </div>
+                <div class="summary-metric">
+                    <div class="value" id="sum-with-results">-</div>
+                    <div class="label">With Results</div>
+                </div>
+                <div class="summary-metric">
+                    <div class="value" id="sum-correct">-</div>
+                    <div class="label">Correct</div>
+                </div>
+                <div class="summary-metric">
+                    <div class="value positive" id="sum-hitrate">-</div>
+                    <div class="label">Hit Rate</div>
+                </div>
+                <div class="summary-metric">
+                    <div class="value" id="sum-roi">-</div>
+                    <div class="label">ROI</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="strong-buys-section" class="section" style="display: none;">
+            <h2>🔥 Solid Bets (Top Picks)</h2>
+            <div class="predictions-grid" id="strong-buys-grid"></div>
+        </div>
+
+        <div id="buys-section" class="section" style="display: none;">
+            <h2>💰 Value Plays</h2>
+            <div class="predictions-grid" id="buys-grid"></div>
+        </div>
+
+        <div id="all-section" class="section">
+            <h2>📋 All Predictions</h2>
+            <div class="predictions-grid" id="all-grid">
+                <div class="loading">Select a date to view predictions</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let availableDates = [];
+        let allPredictions = [];
+        let filteredPredictions = [];
+        
+        // Load available dates on page load
+        async function loadDates() {
+            try {
+                const resp = await fetch('/api/dates');
+                const data = await resp.json();
+                availableDates = data.dates || [];
+                
+                const select = document.getElementById('date-select');
+                select.innerHTML = '<option value="">All Dates (Dynamic)</option>';
+                
+                availableDates.forEach(d => {
+                    let dateStr = d.date || d.analysis_date || '';
+                    if (dateStr.includes('T')) {
+                        dateStr = dateStr.split('T')[0];
+                    }
+                    
+                    const opt = document.createElement('option');
+                    opt.value = dateStr;
+                    opt.textContent = `${dateStr} (${d.total_picks} picks)`;
+                    select.appendChild(opt);
+                });
+                
+                // Load dynamic stats for all dates with default Solid Bet filter
+                loadDynamicStats();
+                
+                // Auto-load first date after stats
+                if (availableDates.length > 0) {
+                    select.selectedIndex = 1;
+                    loadPredictions();
+                }
+            } catch (e) {
+                console.error('Error loading dates:', e);
+                document.getElementById('date-select').innerHTML = '<option value="">Error loading dates</option>';
+            }
+        }
+        
+        async function loadDynamicStats() {
+            try {
+                const resp = await fetch('/api/predictions/all');
+                const data = await resp.json();
+                allPredictions = data.predictions || [];
+                
+                // Apply current filter to get dynamic stats
+                applyFilters();
+                
+                // Calculate dynamic stats from filtered data
+                calculateDynamicStats();
+            } catch (e) {
+                console.error('Error loading dynamic stats:', e);
+            }
+        }
+        
+        function calculateDynamicStats() {
+            const predictions = filteredPredictions.length > 0 ? filteredPredictions : allPredictions;
+            
+            let totalBets = 0;
+            let hits = 0;
+            let totalProfit = 0;
+            
+            for (const pred of predictions) {
+                if (pred.get('actual_hr') !== undefined) {
+                    totalBets += 1;
+                    const odds = pred.get('odds_decimal');
+                    if (pred.get('actual_hr') === true) {
+                        hits += 1;
+                        if (odds && odds > 1) {
+                            totalProfit += (odds - 1);
+                        } else {
+                            totalProfit += 0;
+                        }
+                    } else {
+                        totalProfit -= 1;
+                    }
+                }
+            }
+            
+            const hitRate = totalBets > 0 ? (hits / totalBets * 100) : 0;
+            const roi = totalBets > 0 ? (totalProfit / totalBets * 100) : 0;
+            
+            document.getElementById('dynamic-picks-stat').querySelector('.stat-value').textContent = predictions.length;
+            document.getElementById('dynamic-hitrate-stat').querySelector('.stat-value').textContent = hitRate.toFixed(1) + '%';
+            document.getElementById('dynamic-roi-stat').querySelector('.stat-value').textContent = (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%';
+            
+            // Color code ROI
+            const roiElement = document.getElementById('dynamic-roi-stat').querySelector('.stat-value');
+            if (roi > 0) {
+                roiElement.style.color = '#00ff88';
+            } else if (roi < 0) {
+                roiElement.style.color = '#ff4444';
+            } else {
+                roiElement.style.color = '#667eea';
+            }
+        }
+        
+        function applyFilters() {
+            const classification = document.getElementById('filter-classification').value;
+            
+            if (allPredictions.length === 0) return;
+            
+            filteredPredictions = allPredictions.filter(p => {
+                if (classification && p.hellraiser_classification !== classification) return false;
+                return true;
+            });
+            
+            calculateDynamicStats();
+            
+            // If a date is selected, refresh the view
+            const selectedDate = document.getElementById('date-select').value;
+            if (selectedDate) {
+                refreshDateView(selectedDate);
+            }
+        }
+        
+        function clearFilters() {
+            document.getElementById('filter-classification').value = '';
+            document.getElementById('date-select').selectedIndex = 0;
+            applyFilters();
+        }
+        
+        async function loadPredictions() {
+            const selectedDate = document.getElementById('date-select').value;
+            if (!selectedDate) {
+                alert('Please select a date');
+                return;
+            }
+            
+            const btn = document.getElementById('load-btn');
+            btn.disabled = true;
+            btn.textContent = 'Loading...';
+            
+            document.getElementById('all-grid').innerHTML = '<div class="loading">Loading predictions...</div>';
+            
+            try {
+                const resp = await fetch(`/api/predictions/${selectedDate}`);
+                const data = await resp.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                displayResults(data);
+            } catch (e) {
+                console.error('Error:', e);
+                document.getElementById('all-grid').innerHTML = `<div class="error">Error: ${e.message}</div>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Load Predictions';
+            }
+        }
+        
+        function refreshDateView(dateStr) {
+            if (!dateStr) return;
+            
+            fetch(`/api/predictions/${dateStr}`)
+                .then(resp => resp.json())
+                .then(data => {
+                    if (!data.error) {
+                        displayResults(data);
+                    }
+                })
+                .catch(e => console.error('Error refreshing view:', e));
+        }
+        
+        function displayResults(data) {
+            const date = data.date;
+            let results = data.predictions || [];
+            const stats = data.stats || {};
+            
+            // Apply classification filter
+            const classification = document.getElementById('filter-classification').value;
+            if (classification) {
+                results = results.filter(r => r.hellraiser_classification === classification);
+            }
+            
+            // Show summary box
+            const summaryBox = document.getElementById('summary-box');
+            summaryBox.style.display = 'block';
+            document.getElementById('summary-date').textContent = date;
+            
+            const filterLabel = classification ? ` (${classification})` : '';
+            document.getElementById('summary-filter').textContent = filterLabel;
+            
+            // Calculate filtered stats with ROI
+            let totalPicks = results.length;
+            let completedPicks = 0;
+            let correctPicks = 0;
+            let totalProfit = 0;
+            
+            for (const r of results) {
+                if (r.actual_hr !== undefined) {
+                    completedPicks += 1;
+                    const odds = r.odds_decimal;
+                    if (r.actual_hr === true) {
+                        correctPicks += 1;
+                        if (odds && odds > 1) {
+                            totalProfit += (odds - 1);
+                        }
+                    } else {
+                        totalProfit -= 1;
+                    }
+                }
+            }
+            
+            const hitRate = completedPicks > 0 ? (correctPicks / completedPicks * 100) : 0;
+            const roi = completedPicks > 0 ? (totalProfit / completedPicks * 100) : 0;
+            
+            document.getElementById('sum-total').textContent = totalPicks;
+            document.getElementById('sum-with-results').textContent = completedPicks;
+            document.getElementById('sum-correct').textContent = correctPicks;
+            document.getElementById('sum-hitrate').textContent = hitRate.toFixed(1) + '%';
+            
+            const roiElement = document.getElementById('sum-roi');
+            roiElement.textContent = (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%';
+            if (roi > 0) {
+                roiElement.className = 'value positive';
+            } else if (roi < 0) {
+                roiElement.className = 'value negative';
+            } else {
+                roiElement.className = 'value';
+            }
+            
+            // Separate by classification - using actual Hellraiser labels
+            const solidBets = results.filter(r => r.hellraiser_classification === 'Solid Bet');
+            const valuePlays = results.filter(r => r.hellraiser_classification === 'Value Play');
+            
+            // Display Solid Bets (top tier)
+            const strongSection = document.getElementById('strong-buys-section');
+            const strongGrid = document.getElementById('strong-buys-grid');
+            strongSection.querySelector('h2').textContent = '🔥 Solid Bets (Top Picks)';
+            if (solidBets.length > 0) {
+                strongSection.style.display = 'block';
+                strongGrid.innerHTML = solidBets.map(r => createCard(r)).join('');
+            } else {
+                strongSection.style.display = 'none';
+            }
+            
+            // Display Value Plays
+            const buySection = document.getElementById('buys-section');
+            const buyGrid = document.getElementById('buys-grid');
+            buySection.querySelector('h2').textContent = '💰 Value Plays';
+            if (valuePlays.length > 0) {
+                buySection.style.display = 'block';
+                buyGrid.innerHTML = valuePlays.map(r => createCard(r)).join('');
+            } else {
+                buySection.style.display = 'none';
+            }
+            
+            // Display all filtered results
+            if (results.length > 0) {
+                document.getElementById('all-grid').innerHTML = results.map(r => createCard(r)).join('');
+            } else {
+                document.getElementById('all-grid').innerHTML = '<div class="loading">No predictions match your filters</div>';
+            }
+        }
+        
+        function createCard(r) {
+            const hrClass = r.hellraiser_classification || '';
+            const hrConf = r.hellraiser_confidence || 0;
+            
+            let signal = 'LONGSHOT';
+            let signalDisplay = hrClass || 'Unknown';
+            
+            if (hrClass === 'Solid Bet' || hrConf >= 40) {
+                signal = 'SOLID-BET';
+                signalDisplay = 'SOLID BET';
+            } else if (hrClass === 'Value Play' || hrConf >= 30) {
+                signal = 'VALUE-PLAY';
+                signalDisplay = 'VALUE PLAY';
+            } else if (hrClass === 'Longshot') {
+                signal = 'LONGSHOT';
+                signalDisplay = 'LONGSHOT';
+            }
+            
+            let resultBadge = '';
+            if (r.actual_hr !== undefined) {
+                resultBadge = r.actual_hr 
+                    ? '<span class="result-badge result-hit">✅ HR</span>'
+                    : '<span class="result-badge result-miss">❌</span>';
+            }
+            
+            const cardClass = r.actual_hr ? 'correct' : (r.actual_hr === false ? 'incorrect' : '');
+            
+            return `
+                <div class="prediction-card ${signal} ${cardClass}">
+                    <div class="card-header">
+                        <div>
+                            <div class="player-name">${r.player_name || 'Unknown'}</div>
+                            <div class="team-info">${r.team || ''} vs ${r.opponent || 'TBD'}</div>
+                        </div>
+                        <div>
+                            <span class="signal-badge signal-${signal}">${signalDisplay}</span>
+                            ${resultBadge}
+                        </div>
+                    </div>
+                    <div class="metrics">
+                        <div class="metric">
+                            <div class="value">${hrConf.toFixed(1)}</div>
+                            <div class="label">HR Score</div>
+                        </div>
+                        <div class="metric">
+                            <div class="value">${(r.probability * 100).toFixed(1)}%</div>
+                            <div class="label">Model %</div>
+                        </div>
+                        <div class="metric">
+                            <div class="value">${r.odds_decimal ? r.odds_decimal.toFixed(1) : '-'}</div>
+                            <div class="label">Odds</div>
+                        </div>
+                        <div class="metric">
+                            <div class="value">${r.actual_hr ? '✅ HR!' : (r.actual_hr === false ? '❌' : '-')}</div>
+                            <div class="label">Result</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function showAllDates() {
+            const classification = document.getElementById('filter-classification').value;
+            const filterLabel = classification ? ` (${classification})` : '';
+            
+            const html = availableDates.map(d => `
+                <div class="date-item" onclick="document.getElementById('date-select').value='${d.date.split('T')[0]}'; loadPredictions();">
+                    <span>${d.date.split('T')[0]}</span>
+                    <span>${d.total_picks} picks</span>
+                </div>
+            `).join('');
+            
+            const allGrid = document.getElementById('all-grid');
+            allGrid.innerHTML = `
+                <div style="grid-column: 1/-1;">
+                    <h3 style="margin-bottom: 15px;">📅 All Available Dates${filterLabel} (${availableDates.length} dates)</h3>
+                    <div class="dates-list">${html}</div>
+                </div>
+            `;
+            
+            document.getElementById('strong-buys-section').style.display = 'none';
+            document.getElementById('buys-section').style.display = 'none';
+            document.getElementById('summary-box').style.display = 'none';
+        }
+        
+        // Initialize
+        loadDates();
+    </script>
+</body>
+</html>

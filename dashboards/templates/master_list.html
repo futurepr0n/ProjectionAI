@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProjectionAI - Master List</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1600px; margin: 0 auto; }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #3a3a5a;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        h1 {
+            font-size: 2rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .overall-stats {
+            display: flex;
+            gap: 20px;
+        }
+        .overall-stat {
+            background: rgba(0, 255, 136, 0.15);
+            border: 2px solid #00ff88;
+            border-radius: 12px;
+            padding: 15px 25px;
+            text-align: center;
+        }
+        .overall-stat .value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #00ff88;
+        }
+        .overall-stat .label {
+            font-size: 0.8rem;
+            color: #aaa;
+            margin-top: 5px;
+        }
+        .filters {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: end;
+        }
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .filter-group label {
+            font-size: 0.8rem;
+            color: #aaa;
+        }
+        .filter-group select, .filter-group input {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid #3a3a5a;
+            color: #eee;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            min-width: 150px;
+        }
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.3s;
+        }
+        .btn:hover { background: #764ba2; }
+        .btn-clear {
+            background: #ff4444;
+        }
+        .btn-clear:hover { background: #cc0000; }
+        
+        .summary {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .summary span {
+            color: #aaa;
+        }
+        .summary strong {
+            color: #667eea;
+            margin-left: 5px;
+        }
+        
+        .table-container {
+            background: rgba(255,255,255,0.02);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        thead {
+            background: rgba(102, 126, 234, 0.2);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #3a3a5a;
+        }
+        th {
+            font-weight: 600;
+            color: #fff;
+            font-size: 0.85rem;
+            cursor: pointer;
+            user-select: none;
+        }
+        th:hover { background: rgba(102, 126, 234, 0.3); }
+        td { font-size: 0.85rem; }
+        tbody tr:hover { background: rgba(255,255,255,0.05); }
+        
+        .classification-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-weight: bold;
+            font-size: 0.75rem;
+            display: inline-block;
+        }
+        .classification-Solid-Bet {
+            background: #00ff88;
+            color: #000;
+        }
+        .classification-Value-Play {
+            background: #667eea;
+            color: #fff;
+        }
+        .classification-Longshot {
+            background: #ff4444;
+            color: #fff;
+        }
+        
+        .result-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-weight: bold;
+            font-size: 0.75rem;
+            display: inline-block;
+        }
+        .result-hit { background: #00ff88; color: #000; }
+        .result-miss { background: #ff4444; color: #fff; }
+        .result-pending { background: #ffa500; color: #000; }
+        
+        .positive { color: #00ff88; }
+        .negative { color: #ff4444; }
+        
+        .loading { text-align: center; padding: 40px; color: #aaa; }
+        .error { color: #ff4444; padding: 20px; text-align: center; }
+        
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            padding: 20px;
+            flex-wrap: wrap;
+        }
+        .page-btn {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid #3a3a5a;
+            color: #eee;
+            padding: 8px 15px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .page-btn:hover { background: #667eea; }
+        .page-btn.active { background: #667eea; border-color: #667eea; }
+        .page-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>📊 ProjectionAI - Master List</h1>
+                <p style="color: #aaa;">All HR Predictions with Results</p>
+            </div>
+            <div class="overall-stats">
+                <div class="overall-stat">
+                    <div class="value" id="overall-hitrate">Loading...</div>
+                    <div class="label">Hit Rate</div>
+                </div>
+                <div class="overall-stat">
+                    <div class="value" id="overall-roi">Loading...</div>
+                    <div class="label">ROI</div>
+                </div>
+            </div>
+        </header>
+
+        <div class="filters">
+            <div class="filter-group">
+                <label>Prediction Type</label>
+                <select id="filter-classification" onchange="applyFilters()">
+                    <option value="">All Types</option>
+                    <option value="Solid Bet" selected>Solid Bet</option>
+                    <option value="Value Play">Value Play</option>
+                    <option value="Longshot">Longshot</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Min Confidence</label>
+                <select id="filter-confidence" onchange="applyFilters()">
+                    <option value="">All Confidence</option>
+                    <option value="40">40%+ (Solid Bet)</option>
+                    <option value="30">30%+ (Value Play+)</option>
+                    <option value="20">20%+ (All)</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Date From</label>
+                <input type="date" id="filter-date-from" onchange="applyFilters()">
+            </div>
+            <div class="filter-group">
+                <label>Date To</label>
+                <input type="date" id="filter-date-to" onchange="applyFilters()">
+            </div>
+            <div class="filter-group">
+                <label>Show Results</label>
+                <select id="filter-result" onchange="applyFilters()">
+                    <option value="">All Results</option>
+                    <option value="hit">Hits Only</option>
+                    <option value="miss">Misses Only</option>
+                    <option value="pending">Pending Only</option>
+                </select>
+            </div>
+            <button class="btn btn-clear" onclick="clearFilters()">Clear Filters</button>
+        </div>
+
+        <div class="summary" id="summary" style="display: none;">
+            <span>Showing <strong id="showing-count">0</strong> of <strong id="total-count">0</strong> predictions</span>
+            <span>Filtered Hit Rate: <strong id="filtered-hitrate">0%</strong></span>
+        </div>
+
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th onclick="sortTable('date')">Date ⬍</th>
+                        <th onclick="sortTable('player')">Player ⬍</th>
+                        <th onclick="sortTable('team')">Team ⬍</th>
+                        <th onclick="sortTable('type')">Type ⬍</th>
+                        <th onclick="sortTable('confidence')">Confidence ⬍</th>
+                        <th onclick="sortTable('probability')">Model % ⬍</th>
+                        <th onclick="sortTable('odds')">Odds ⬍</th>
+                        <th onclick="sortTable('result')">Result ⬍</th>
+                    </tr>
+                </thead>
+                <tbody id="predictions-table">
+                    <tr><td colspan="8" class="loading">Loading predictions...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="pagination" id="pagination"></div>
+    </div>
+
+    <script>
+        let allPredictions = [];
+        let filteredPredictions = [];
+        let currentPage = 1;
+        const itemsPerPage = 50;
+        let sortField = 'date';
+        let sortDirection = 'desc';
+
+        async function loadAllPredictions() {
+            try {
+                const resp = await fetch('/api/predictions/all');
+                const data = await resp.json();
+                allPredictions = data.predictions || [];
+                filteredPredictions = [...allPredictions];
+                
+                const stats = data.overall_stats || {};
+                document.getElementById('overall-hitrate').textContent = stats.hit_rate ? stats.hit_rate.toFixed(1) + '%' : '0%';
+                document.getElementById('overall-roi').textContent = stats.roi ? (stats.roi >= 0 ? '+' : '') + stats.roi.toFixed(1) + '%' : '0%';
+                
+                applyFilters();
+            } catch (e) {
+                console.error('Error loading predictions:', e);
+                document.getElementById('predictions-table').innerHTML = `<tr><td colspan="8" class="error">Error loading predictions: ${e.message}</td></tr>`;
+            }
+        }
+
+        function applyFilters() {
+            const classification = document.getElementById('filter-classification').value;
+            const minConfidence = document.getElementById('filter-confidence').value;
+            const dateFrom = document.getElementById('filter-date-from').value;
+            const dateTo = document.getElementById('filter-date-to').value;
+            const resultFilter = document.getElementById('filter-result').value;
+
+            filteredPredictions = allPredictions.filter(p => {
+                if (classification && p.hellraiser_classification !== classification) return false;
+                if (minConfidence && (p.hellraiser_confidence || 0) < parseFloat(minConfidence)) return false;
+                if (dateFrom && p.analysis_date < dateFrom) return false;
+                if (dateTo && p.analysis_date > dateTo) return false;
+                
+                if (resultFilter === 'hit' && !p.actual_hr) return false;
+                if (resultFilter === 'miss' && p.actual_hr !== false) return false;
+                if (resultFilter === 'pending' && p.actual_hr !== undefined) return false;
+                
+                return true;
+            });
+
+            sortData();
+            updateSummary();
+            currentPage = 1;
+            renderTable();
+        }
+
+        function sortData() {
+            filteredPredictions.sort((a, b) => {
+                let valA, valB;
+                
+                switch (sortField) {
+                    case 'date':
+                        valA = a.analysis_date || '';
+                        valB = b.analysis_date || '';
+                        break;
+                    case 'player':
+                        valA = (a.player_name || '').toLowerCase();
+                        valB = (b.player_name || '').toLowerCase();
+                        break;
+                    case 'team':
+                        valA = a.team || '';
+                        valB = b.team || '';
+                        break;
+                    case 'type':
+                        valA = a.hellraiser_classification || '';
+                        valB = b.hellraiser_classification || '';
+                        break;
+                    case 'confidence':
+                        valA = a.hellraiser_confidence || 0;
+                        valB = b.hellraiser_confidence || 0;
+                        break;
+                    case 'probability':
+                        valA = a.probability || 0;
+                        valB = b.probability || 0;
+                        break;
+                    case 'odds':
+                        valA = a.odds_decimal || 0;
+                        valB = b.odds_decimal || 0;
+                        break;
+                    case 'result':
+                        valA = p.actual_hr === true ? 2 : (p.actual_hr === false ? 1 : 0);
+                        valB = b.actual_hr === true ? 2 : (b.actual_hr === false ? 1 : 0);
+                        break;
+                    default:
+                        return 0;
+                }
+                
+                if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+                if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+
+        function sortTable(field) {
+            if (sortField === field) {
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortField = field;
+                sortDirection = 'desc';
+            }
+            sortData();
+            renderTable();
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('predictions-table');
+            const start = (currentPage - 1) * itemsPerPage;
+            const end = start + itemsPerPage;
+            const pageData = filteredPredictions.slice(start, end);
+
+            if (pageData.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="8" class="loading">No predictions match your filters</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = pageData.map(p => {
+                const classLabel = p.hellraiser_classification || 'Unknown';
+                const classSlug = classLabel.replace(/\s+/g, '-');
+                const confidence = (p.hellraiser_confidence || 0).toFixed(1);
+                const probability = ((p.probability || 0) * 100).toFixed(1);
+                const odds = p.odds_decimal ? p.odds_decimal.toFixed(1) : '-';
+                
+                let resultBadge = '<span class="result-badge result-pending">Pending</span>';
+                if (p.actual_hr === true) {
+                    resultBadge = '<span class="result-badge result-hit">✅ HR</span>';
+                } else if (p.actual_hr === false) {
+                    resultBadge = '<span class="result-badge result-miss">❌ Miss</span>';
+                }
+
+                return `
+                    <tr>
+                        <td>${p.analysis_date || '-'}</td>
+                        <td>${p.player_name || 'Unknown'}</td>
+                        <td>${p.team || '-'}</td>
+                        <td><span class="classification-badge classification-${classSlug}">${classLabel}</span></td>
+                        <td>${confidence}</td>
+                        <td>${probability}%</td>
+                        <td>${odds}</td>
+                        <td>${resultBadge}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            renderPagination();
+        }
+
+        function renderPagination() {
+            const totalPages = Math.ceil(filteredPredictions.length / itemsPerPage);
+            const pagination = document.getElementById('pagination');
+            
+            if (totalPages <= 1) {
+                pagination.innerHTML = '';
+                return;
+            }
+
+            let html = '';
+            
+            html += `<button class="page-btn" onclick="goToPage(1)" ${currentPage === 1 ? 'disabled' : ''}>First</button>`;
+            html += `<button class="page-btn" onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>Prev</button>`;
+            
+            for (let i = Math.max(1, currentPage - 2); i <= Math.min(totalPages, currentPage + 2); i++) {
+                html += `<button class="page-btn ${i === currentPage ? 'active' : ''}" onclick="goToPage(${i})">${i}</button>`;
+            }
+            
+            html += `<button class="page-btn" onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>Next</button>`;
+            html += `<button class="page-btn" onclick="goToPage(${totalPages})" ${currentPage === totalPages ? 'disabled' : ''}>Last</button>`;
+            
+            pagination.innerHTML = html;
+        }
+
+        function goToPage(page) {
+            const totalPages = Math.ceil(filteredPredictions.length / itemsPerPage);
+            if (page < 1 || page > totalPages) return;
+            currentPage = page;
+            renderTable();
+            document.querySelector('.table-container').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function updateSummary() {
+            const summary = document.getElementById('summary');
+            const hits = filteredPredictions.filter(p => p.actual_hr === true).length;
+            const completed = filteredPredictions.filter(p => p.actual_hr !== undefined).length;
+            const hitRate = completed > 0 ? ((hits / completed) * 100).toFixed(1) : '0';
+
+            document.getElementById('showing-count').textContent = filteredPredictions.length;
+            document.getElementById('total-count').textContent = allPredictions.length;
+            document.getElementById('filtered-hitrate').textContent = hitRate + '%';
+            summary.style.display = 'flex';
+        }
+
+        function clearFilters() {
+            document.getElementById('filter-classification').value = '';
+            document.getElementById('filter-confidence').value = '';
+            document.getElementById('filter-date-from').value = '';
+            document.getElementById('filter-date-to').value = '';
+            document.getElementById('filter-result').value = '';
+            applyFilters();
+        }
+
+        loadAllPredictions();
+    </script>
+</body>
+</html>

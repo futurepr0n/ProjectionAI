@@ -1,0 +1,108 @@
+{
+  "model_type": "XGBoost HR Prediction",
+  "timestamp": "2026-02-23T10:24:25.540176",
+  "data": {
+    "total_rows": 7376,
+    "train_rows": 6303,
+    "test_rows": 1073,
+    "hr_rate": 0.1079175704989154,
+    "train_hr_rate": 0.10598127875614786,
+    "test_hr_rate": 0.11929170549860205,
+    "split_date": "2025-07-28",
+    "features_used": [
+      "swing_optimization_score",
+      "swing_attack_angle",
+      "swing_bat_speed",
+      "pitcher_era",
+      "pitcher_k_per_9",
+      "pitcher_whip",
+      "pitcher_hr_per_9",
+      "is_home",
+      "confidence_score",
+      "odds_decimal"
+    ],
+    "feature_coverage": {
+      "barrel_rate": 9.259761388286334,
+      "exit_velocity_avg": 9.259761388286334,
+      "hard_hit_percent": 9.259761388286334,
+      "sweet_spot_percent": 9.259761388286334,
+      "swing_optimization_score": 55.68058568329718,
+      "swing_attack_angle": 55.68058568329718,
+      "swing_bat_speed": 55.68058568329718,
+      "pitcher_era": 98.6713665943601,
+      "pitcher_k_per_9": 98.6713665943601,
+      "pitcher_whip": 98.6713665943601,
+      "pitcher_hr_per_9": 98.6713665943601,
+      "is_home": 100.0,
+      "confidence_score": 100.0,
+      "odds_decimal": 100.0
+    }
+  },
+  "model_params": {
+    "n_estimators": 300,
+    "max_depth": 5,
+    "learning_rate": 0.05,
+    "scale_pos_weight": 8.43562874251497,
+    "optimal_threshold": 0.41000000000000003
+  },
+  "metrics": {
+    "auc": 0.6305348875661375,
+    "accuracy": 0.614165890027959,
+    "precision": 0.16898148148148148,
+    "recall": 0.5703125,
+    "f1": 0.26071428571428573,
+    "brier_score": 0.19196869432926178,
+    "confusion_matrix": [
+      [
+        586,
+        359
+      ],
+      [
+        55,
+        73
+      ]
+    ]
+  },
+  "feature_importance": [
+    {
+      "feature": "pitcher_hr_per_9",
+      "importance": 0.1511882245540619
+    },
+    {
+      "feature": "odds_decimal",
+      "importance": 0.14655563235282898
+    },
+    {
+      "feature": "confidence_score",
+      "importance": 0.11110872775316238
+    },
+    {
+      "feature": "swing_optimization_score",
+      "importance": 0.10149868577718735
+    },
+    {
+      "feature": "swing_attack_angle",
+      "importance": 0.10066436976194382
+    },
+    {
+      "feature": "pitcher_whip",
+      "importance": 0.1001000925898552
+    },
+    {
+      "feature": "swing_bat_speed",
+      "importance": 0.0990704670548439
+    },
+    {
+      "feature": "pitcher_k_per_9",
+      "importance": 0.0976850762963295
+    },
+    {
+      "feature": "pitcher_era",
+      "importance": 0.09212876856327057
+    },
+    {
+      "feature": "is_home",
+      "importance": 0.0
+    }
+  ]
+}
