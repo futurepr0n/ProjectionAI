@@ -79,6 +79,32 @@
             font-size: 1rem;
             min-width: 180px;
         }
+        .checkbox-filter {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 42px;
+            padding: 0 12px;
+            border: 1px solid #3a3a5a;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.08);
+            color: #eee;
+        }
+        .checkbox-filter input {
+            width: 16px;
+            height: 16px;
+        }
+        .slider-filter {
+            min-width: 220px;
+        }
+        .slider-filter input[type="range"] {
+            width: 100%;
+        }
+        .slider-value {
+            font-size: 0.8rem;
+            color: #aaa;
+            text-align: center;
+        }
         .btn {
             background: #667eea;
             color: white;
@@ -203,6 +229,43 @@
             justify-content: space-between;
         }
         .date-item:hover { background: rgba(255,255,255,0.1); }
+
+        .prop-stats-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .prop-stat-panel {
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+            padding: 10px 14px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            min-width: 80px;
+        }
+        .prop-stat-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            color: #667eea;
+            letter-spacing: 1px;
+            font-weight: 700;
+        }
+        .prop-stat-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .prop-stat-item span {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #fff;
+        }
+        .prop-stat-item small {
+            font-size: 0.6rem;
+            color: #aaa;
+        }
     </style>
 </head>
 <body>
@@ -210,29 +273,66 @@
         <header>
             <div>
                 <h1>🎸 ProjectionAI</h1>
-                <p style="color: #aaa;">HR Prediction System - XGBoost</p>
+                <p style="color: #aaa;">Multi-target prediction dashboard for HR, Hit, and current SO scoring</p>
             </div>
             <div class="model-stats">
                 <div class="stat">
                     <div class="stat-value">0.9458</div>
                     <div class="stat-label">ROC-AUC</div>
                 </div>
-                <div class="stat" id="dynamic-picks-stat">
-                    <div class="stat-value dynamic">Loading...</div>
-                    <div class="stat-label">Picks</div>
+                <div class="prop-stats-group">
+                    <div class="prop-stat-panel" id="hr-stat-panel">
+                        <div class="prop-stat-label">HR</div>
+                        <div class="prop-stat-item">
+                            <span id="hr-picks">—</span><small>Picks</small>
+                        </div>
+                        <div class="prop-stat-item">
+                            <span id="hr-hitrate">—</span><small>Hit Rate</small>
+                        </div>
+                    </div>
+                    <div class="prop-stat-panel" id="hit-stat-panel">
+                        <div class="prop-stat-label">Hit</div>
+                        <div class="prop-stat-item">
+                            <span id="hit-picks">—</span><small>Picks</small>
+                        </div>
+                        <div class="prop-stat-item">
+                            <span id="hit-hitrate">—</span><small>Hit Rate</small>
+                        </div>
+                    </div>
+                    <div class="prop-stat-panel" id="so-stat-panel">
+                        <div class="prop-stat-label" id="so-stat-label">SO 3+</div>
+                        <div class="prop-stat-item">
+                            <span id="so-picks">—</span><small>Picks</small>
+                        </div>
+                        <div class="prop-stat-item">
+                            <span id="so-hitrate">—</span><small>Hit Rate</small>
+                        </div>
+                    </div>
                 </div>
-                <div class="stat" id="dynamic-hitrate-stat">
-                    <div class="stat-value dynamic">Loading...</div>
-                    <div class="stat-label">Hit Rate</div>
-                </div>
-                <div class="stat" id="dynamic-roi-stat">
-                    <div class="stat-value dynamic">Loading...</div>
-                    <div class="stat-label">ROI</div>
+                <div class="stat" id="model-status-indicator" style="padding: 12px 18px; border-radius: 10px; display: flex; align-items: center; gap: 8px;">
+                    <div style="width: 10px; height: 10px; border-radius: 50%; background: #999;"></div>
+                    <div style="display: flex; flex-direction: column; align-items: flex-start;">
+                        <div class="stat-value" id="model-status-text" style="font-size: 0.9rem;">Checking...</div>
+                        <div class="stat-label">Model Status</div>
+                    </div>
                 </div>
             </div>
         </header>
 
         <div class="controls">
+            <div class="filter-group">
+                <label>Prediction Type:</label>
+                <select id="target-select" onchange="changePredictionTarget()">
+                    <option value="hr">Home Run (HR)</option>
+                    <option value="hit">Any Hit</option>
+                    <option value="so">Starter Strikeouts</option>
+                </select>
+            </div>
+            <div class="filter-group slider-filter" id="so-threshold-group" style="display: none;">
+                <label>SO Threshold:</label>
+                <input type="range" id="so-threshold" min="3" max="6" step="1" value="3" oninput="updateSoThresholdLabel()" onchange="handleSoThresholdChange()">
+                <div class="slider-value" id="so-threshold-value">3+ K</div>
+            </div>
             <div class="filter-group">
                 <label>Date:</label>
                 <select id="date-select" class="date-input">
@@ -242,15 +342,30 @@
             <div class="filter-group">
                 <label>Classification:</label>
                 <select id="filter-classification" onchange="applyFilters()">
-                    <option value="">All Types</option>
-                    <option value="Solid Bet" selected>Solid Bet</option>
-                    <option value="Value Play">Value Play</option>
-                    <option value="Longshot">Longshot</option>
+                    <option value="" selected>All Types</option>
+                    <option value="STRONG_BUY">Strong Buy</option>
+                    <option value="BUY">Buy</option>
+                    <option value="MODERATE">Moderate</option>
+                    <option value="AVOID">Avoid</option>
                 </select>
+            </div>
+            <div class="filter-group">
+                <label>Team:</label>
+                <select id="filter-team" onchange="applyFilters()">
+                    <option value="" selected>All Teams</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Matchup Filter:</label>
+                <label class="checkbox-filter">
+                    <input type="checkbox" id="include-opponent" onchange="applyFilters()">
+                    <span>Include Opponent</span>
+                </label>
             </div>
             <button class="btn" id="load-btn" onclick="loadPredictions()">Load Predictions</button>
             <button class="btn btn-clear" onclick="clearFilters()">Clear Filters</button>
             <button class="btn" onclick="showAllDates()">View All Dates</button>
+            <button class="btn" id="train-btn" title="Retrain on latest season data. Run weekly or when model accuracy drops. Training takes ~2-5 minutes." onclick="trainModelHandler()">Train Model</button>
         </div>
 
         <div id="summary-box" class="summary-box" style="display: none;">
@@ -301,32 +416,64 @@
         let availableDates = [];
         let allPredictions = [];
         let filteredPredictions = [];
-        
+        let currentTarget = 'hr';
+        let availableTeams = [];
+
+        function currentSoThreshold() {
+            return parseInt(document.getElementById('so-threshold').value || '3', 10);
+        }
+
+        function updateSoThresholdLabel() {
+            const threshold = currentSoThreshold();
+            document.getElementById('so-threshold-value').textContent = `${threshold}+ K`;
+            document.getElementById('so-stat-label').textContent = `SO ${threshold}+`;
+        }
+
+        function updateSoControls() {
+            const isSo = currentTarget === 'so';
+            document.getElementById('so-threshold-group').style.display = isSo ? 'flex' : 'none';
+        }
+
+        function hasActiveFilters() {
+            return Boolean(
+                document.getElementById('filter-classification').value ||
+                document.getElementById('filter-team').value ||
+                document.getElementById('include-opponent').checked
+            );
+        }
+
+        function changePredictionTarget() {
+            currentTarget = document.getElementById('target-select').value;
+            updateSoControls();
+            loadDynamicStats();
+            loadPredictions();
+        }
+
         // Load available dates on page load
         async function loadDates() {
             try {
                 const resp = await fetch('/api/dates');
                 const data = await resp.json();
                 availableDates = data.dates || [];
-                
+
                 const select = document.getElementById('date-select');
                 select.innerHTML = '<option value="">All Dates (Dynamic)</option>';
-                
+
                 availableDates.forEach(d => {
                     let dateStr = d.date || d.analysis_date || '';
                     if (dateStr.includes('T')) {
                         dateStr = dateStr.split('T')[0];
                     }
-                    
+
                     const opt = document.createElement('option');
                     opt.value = dateStr;
                     opt.textContent = `${dateStr} (${d.total_picks} picks)`;
                     select.appendChild(opt);
                 });
-                
-                // Load dynamic stats for all dates with default Solid Bet filter
+
+                // Load dynamic stats on load
                 loadDynamicStats();
-                
+
                 // Auto-load first date after stats
                 if (availableDates.length > 0) {
                     select.selectedIndex = 1;
@@ -340,37 +487,44 @@
         
         async function loadDynamicStats() {
             try {
-                const resp = await fetch('/api/predictions/all');
+                const params = new URLSearchParams({ so_threshold: currentSoThreshold() });
+                const resp = await fetch(`/api/stats/all-targets?${params.toString()}`);
                 const data = await resp.json();
-                allPredictions = data.predictions || [];
-                
-                // Apply current filter to get dynamic stats
-                applyFilters();
-                
-                // Calculate dynamic stats from filtered data
-                calculateDynamicStats();
+                for (const target of ['hr', 'hit', 'so']) {
+                    const s = data[target] || {};
+                    document.getElementById(`${target}-picks`).textContent =
+                        s.picks != null ? s.picks : '—';
+                    document.getElementById(`${target}-hitrate`).textContent =
+                        s.hit_rate != null ? s.hit_rate.toFixed(1) + '%' : '—';
+                }
             } catch (e) {
-                console.error('Error loading dynamic stats:', e);
+                console.error('Error loading stats:', e);
             }
         }
         
         function calculateDynamicStats() {
-            const predictions = filteredPredictions.length > 0 ? filteredPredictions : allPredictions;
-            
+            const predictions = hasActiveFilters() ? filteredPredictions : allPredictions;
+            const actualField = `actual_${currentTarget}`;
+            const picksStat = document.getElementById('dynamic-picks-stat');
+            const hitRateStat = document.getElementById('dynamic-hitrate-stat');
+            const roiStat = document.getElementById('dynamic-roi-stat');
+
+            if (!picksStat || !hitRateStat || !roiStat) {
+                return;
+            }
+
             let totalBets = 0;
             let hits = 0;
             let totalProfit = 0;
-            
+
             for (const pred of predictions) {
-                if (pred.get('actual_hr') !== undefined) {
+                if (pred[actualField] !== undefined) {
                     totalBets += 1;
-                    const odds = pred.get('odds_decimal');
-                    if (pred.get('actual_hr') === true) {
+                    const odds = pred['odds_decimal'];
+                    if (pred[actualField] === true) {
                         hits += 1;
                         if (odds && odds > 1) {
                             totalProfit += (odds - 1);
-                        } else {
-                            totalProfit += 0;
                         }
                     } else {
                         totalProfit -= 1;
@@ -381,12 +535,12 @@
             const hitRate = totalBets > 0 ? (hits / totalBets * 100) : 0;
             const roi = totalBets > 0 ? (totalProfit / totalBets * 100) : 0;
             
-            document.getElementById('dynamic-picks-stat').querySelector('.stat-value').textContent = predictions.length;
-            document.getElementById('dynamic-hitrate-stat').querySelector('.stat-value').textContent = hitRate.toFixed(1) + '%';
-            document.getElementById('dynamic-roi-stat').querySelector('.stat-value').textContent = (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%';
+            picksStat.querySelector('.stat-value').textContent = predictions.length;
+            hitRateStat.querySelector('.stat-value').textContent = hitRate.toFixed(1) + '%';
+            roiStat.querySelector('.stat-value').textContent = (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%';
             
             // Color code ROI
-            const roiElement = document.getElementById('dynamic-roi-stat').querySelector('.stat-value');
+            const roiElement = roiStat.querySelector('.stat-value');
             if (roi > 0) {
                 roiElement.style.color = '#00ff88';
             } else if (roi < 0) {
@@ -398,16 +552,23 @@
         
         function applyFilters() {
             const classification = document.getElementById('filter-classification').value;
-            
+            const selectedTeam = document.getElementById('filter-team').value;
+            const includeOpponent = document.getElementById('include-opponent').checked;
+
             if (allPredictions.length === 0) return;
-            
+
             filteredPredictions = allPredictions.filter(p => {
-                if (classification && p.hellraiser_classification !== classification) return false;
+                if (classification && p.signal_label !== classification) return false;
+                if (selectedTeam) {
+                    const matchesTeam = p.team === selectedTeam;
+                    const matchesOpponent = includeOpponent && p.opponent === selectedTeam;
+                    if (!matchesTeam && !matchesOpponent) return false;
+                }
                 return true;
             });
-            
+
             calculateDynamicStats();
-            
+
             // If a date is selected, refresh the view
             const selectedDate = document.getElementById('date-select').value;
             if (selectedDate) {
@@ -417,8 +578,27 @@
         
         function clearFilters() {
             document.getElementById('filter-classification').value = '';
-            document.getElementById('date-select').selectedIndex = 0;
+            document.getElementById('filter-team').value = '';
+            document.getElementById('include-opponent').checked = false;
             applyFilters();
+        }
+
+        function updateTeamFilterOptions(teams, preserveSelection = true) {
+            const teamSelect = document.getElementById('filter-team');
+            const currentValue = preserveSelection ? teamSelect.value : '';
+            availableTeams = Array.isArray(teams) ? teams.filter(Boolean) : [];
+
+            teamSelect.innerHTML = '<option value="">All Teams</option>';
+            availableTeams.forEach(team => {
+                const option = document.createElement('option');
+                option.value = team;
+                option.textContent = team;
+                teamSelect.appendChild(option);
+            });
+
+            if (currentValue && availableTeams.includes(currentValue)) {
+                teamSelect.value = currentValue;
+            }
         }
         
         async function loadPredictions() {
@@ -427,21 +607,26 @@
                 alert('Please select a date');
                 return;
             }
-            
+
             const btn = document.getElementById('load-btn');
             btn.disabled = true;
             btn.textContent = 'Loading...';
-            
+
             document.getElementById('all-grid').innerHTML = '<div class="loading">Loading predictions...</div>';
-            
+
             try {
-                const resp = await fetch(`/api/predictions/${selectedDate}`);
+                const params = new URLSearchParams({ target: currentTarget });
+                if (currentTarget === 'so') {
+                    params.set('so_threshold', currentSoThreshold());
+                }
+                const url = `/api/predictions/${selectedDate}?${params.toString()}`;
+                const resp = await fetch(url);
                 const data = await resp.json();
-                
+
                 if (data.error) {
                     throw new Error(data.error);
                 }
-                
+
                 displayResults(data);
             } catch (e) {
                 console.error('Error:', e);
@@ -454,8 +639,11 @@
         
         function refreshDateView(dateStr) {
             if (!dateStr) return;
-            
-            fetch(`/api/predictions/${dateStr}`)
+            const params = new URLSearchParams({ target: currentTarget });
+            if (currentTarget === 'so') {
+                params.set('so_threshold', currentSoThreshold());
+            }
+            fetch(`/api/predictions/${dateStr}?${params.toString()}`)
                 .then(resp => resp.json())
                 .then(data => {
                     if (!data.error) {
@@ -467,34 +655,59 @@
         
         function displayResults(data) {
             const date = data.date;
-            let results = data.predictions || [];
+            const target = data.target || 'hr';
+            allPredictions = data.predictions || [];
+            updateTeamFilterOptions(data.available_teams || [], true);
+            let results = allPredictions.slice();
             const stats = data.stats || {};
-            
+
+            // Determine result column key based on target
+            const resultKey = `actual_${target}`;
+            const resultCountKey = `actual_${target}_count`;
+
             // Apply classification filter
             const classification = document.getElementById('filter-classification').value;
+            const selectedTeam = document.getElementById('filter-team').value;
+            const includeOpponent = document.getElementById('include-opponent').checked;
             if (classification) {
-                results = results.filter(r => r.hellraiser_classification === classification);
+                results = results.filter(r => r.signal_label === classification);
             }
-            
+            if (selectedTeam) {
+                results = results.filter(r => (
+                    r.team === selectedTeam ||
+                    (includeOpponent && r.opponent === selectedTeam)
+                ));
+            }
+
+            filteredPredictions = results.slice();
+
             // Show summary box
             const summaryBox = document.getElementById('summary-box');
             summaryBox.style.display = 'block';
             document.getElementById('summary-date').textContent = date;
-            
-            const filterLabel = classification ? ` (${classification})` : '';
+
+            const filterParts = [];
+            if (target === 'so' && data.stats && data.stats.prop_target) {
+                filterParts.push(data.stats.prop_target);
+            }
+            if (classification) filterParts.push(classification);
+            if (selectedTeam) {
+                filterParts.push(includeOpponent ? `${selectedTeam} incl. opponent` : selectedTeam);
+            }
+            const filterLabel = filterParts.length > 0 ? ` (${filterParts.join(', ')})` : '';
             document.getElementById('summary-filter').textContent = filterLabel;
-            
+
             // Calculate filtered stats with ROI
             let totalPicks = results.length;
             let completedPicks = 0;
             let correctPicks = 0;
             let totalProfit = 0;
-            
+
             for (const r of results) {
-                if (r.actual_hr !== undefined) {
+                if (r[resultKey] !== undefined) {
                     completedPicks += 1;
-                    const odds = r.odds_decimal;
-                    if (r.actual_hr === true) {
+                    const odds = r['odds_decimal'];
+                    if (r[resultKey] === true) {
                         correctPicks += 1;
                         if (odds && odds > 1) {
                             totalProfit += (odds - 1);
@@ -504,7 +717,7 @@
                     }
                 }
             }
-            
+
             const hitRate = completedPicks > 0 ? (correctPicks / completedPicks * 100) : 0;
             const roi = completedPicks > 0 ? (totalProfit / completedPicks * 100) : 0;
             
@@ -523,28 +736,30 @@
                 roiElement.className = 'value';
             }
             
-            // Separate by classification - using actual Hellraiser labels
-            const solidBets = results.filter(r => r.hellraiser_classification === 'Solid Bet');
-            const valuePlays = results.filter(r => r.hellraiser_classification === 'Value Play');
-            
-            // Display Solid Bets (top tier)
+            // Separate by signal classification
+            const strongBuys = results.filter(r => r.signal_label === 'STRONG_BUY');
+            const buys = results.filter(r => r.signal_label === 'BUY');
+            const highConf = [...strongBuys, ...buys];
+
+            // Display Strong Buy / Buy (top tier)
             const strongSection = document.getElementById('strong-buys-section');
             const strongGrid = document.getElementById('strong-buys-grid');
-            strongSection.querySelector('h2').textContent = '🔥 Solid Bets (Top Picks)';
-            if (solidBets.length > 0) {
+            strongSection.querySelector('h2').textContent = '🔥 Strong Buys & Buys (Top Picks)';
+            if (highConf.length > 0) {
                 strongSection.style.display = 'block';
-                strongGrid.innerHTML = solidBets.map(r => createCard(r)).join('');
+                strongGrid.innerHTML = highConf.map(r => createCard(r)).join('');
             } else {
                 strongSection.style.display = 'none';
             }
-            
-            // Display Value Plays
+
+            // Display Moderate signals
+            const moderate = results.filter(r => r.signal_label === 'MODERATE');
             const buySection = document.getElementById('buys-section');
             const buyGrid = document.getElementById('buys-grid');
-            buySection.querySelector('h2').textContent = '💰 Value Plays';
-            if (valuePlays.length > 0) {
+            buySection.querySelector('h2').textContent = '💰 Moderate Signals';
+            if (moderate.length > 0) {
                 buySection.style.display = 'block';
-                buyGrid.innerHTML = valuePlays.map(r => createCard(r)).join('');
+                buyGrid.innerHTML = moderate.map(r => createCard(r)).join('');
             } else {
                 buySection.style.display = 'none';
             }
@@ -555,35 +770,59 @@
             } else {
                 document.getElementById('all-grid').innerHTML = '<div class="loading">No predictions match your filters</div>';
             }
+
+            calculateDynamicStats();
         }
         
         function createCard(r) {
-            const hrClass = r.hellraiser_classification || '';
-            const hrConf = r.hellraiser_confidence || 0;
-            
-            let signal = 'LONGSHOT';
-            let signalDisplay = hrClass || 'Unknown';
-            
-            if (hrClass === 'Solid Bet' || hrConf >= 40) {
-                signal = 'SOLID-BET';
-                signalDisplay = 'SOLID BET';
-            } else if (hrClass === 'Value Play' || hrConf >= 30) {
-                signal = 'VALUE-PLAY';
-                signalDisplay = 'VALUE PLAY';
-            } else if (hrClass === 'Longshot') {
-                signal = 'LONGSHOT';
-                signalDisplay = 'LONGSHOT';
-            }
-            
+            const target = currentTarget || 'hr';
+            const resultKey = `actual_${target}`;
+            const resultCountKey = `actual_${target}_count`;
+
+            const hrClass = r.signal_label || '';
+            const hrConf = r.score || 0;
+
+            const signalLabels = {
+                'STRONG_BUY': 'Strong Buy',
+                'BUY': 'Buy',
+                'MODERATE': 'Moderate',
+                'AVOID': 'Avoid',
+                'STRONG_SELL': 'Strong Sell'
+            };
+            const signalCssClass = {
+                'STRONG_BUY': 'SOLID-BET',
+                'BUY': 'VALUE-PLAY',
+                'MODERATE': 'VALUE-PLAY',
+                'AVOID': 'LONGSHOT',
+                'STRONG_SELL': 'LONGSHOT'
+            };
+
+            const signal = signalCssClass[hrClass] || 'LONGSHOT';
+            const signalDisplay = signalLabels[hrClass] || hrClass || 'Unknown';
+
             let resultBadge = '';
-            if (r.actual_hr !== undefined) {
-                resultBadge = r.actual_hr 
-                    ? '<span class="result-badge result-hit">✅ HR</span>'
-                    : '<span class="result-badge result-miss">❌</span>';
+            let resultLabel = 'Result';
+            let resultDisplay = '-';
+
+            const targetResult = r[resultKey];
+            if (targetResult !== undefined) {
+                if (target === 'hr') {
+                    resultLabel = 'Result';
+                    resultDisplay = targetResult ? '✅ HR!' : '❌';
+                    resultBadge = targetResult ? '<span class="result-badge result-hit">✅ HR</span>' : '<span class="result-badge result-miss">❌</span>';
+                } else if (target === 'hit') {
+                    resultLabel = 'Result';
+                    resultDisplay = targetResult ? '✅ Hit!' : '❌';
+                    resultBadge = targetResult ? '<span class="result-badge result-hit">✅ Hit</span>' : '<span class="result-badge result-miss">❌</span>';
+                } else if (target === 'so') {
+                    resultLabel = 'Result';
+                    resultDisplay = targetResult ? '✅ K!' : '❌';
+                    resultBadge = targetResult ? '<span class="result-badge result-hit">✅ K</span>' : '<span class="result-badge result-miss">❌</span>';
+                }
             }
-            
-            const cardClass = r.actual_hr ? 'correct' : (r.actual_hr === false ? 'incorrect' : '');
-            
+
+            const cardClass = r[resultKey] ? 'correct' : (r[resultKey] === false ? 'incorrect' : '');
+
             return `
                 <div class="prediction-card ${signal} ${cardClass}">
                     <div class="card-header">
@@ -599,7 +838,7 @@
                     <div class="metrics">
                         <div class="metric">
                             <div class="value">${hrConf.toFixed(1)}</div>
-                            <div class="label">HR Score</div>
+                            <div class="label">Score</div>
                         </div>
                         <div class="metric">
                             <div class="value">${(r.probability * 100).toFixed(1)}%</div>
@@ -610,8 +849,8 @@
                             <div class="label">Odds</div>
                         </div>
                         <div class="metric">
-                            <div class="value">${r.actual_hr ? '✅ HR!' : (r.actual_hr === false ? '❌' : '-')}</div>
-                            <div class="label">Result</div>
+                            <div class="value">${resultDisplay}</div>
+                            <div class="label">${resultLabel}</div>
                         </div>
                     </div>
                 </div>
@@ -642,8 +881,88 @@
             document.getElementById('summary-box').style.display = 'none';
         }
         
+        // Model Status Indicator
+        async function updateModelStatus() {
+            try {
+                const resp = await fetch('/api/model/stats');
+                const stats = await resp.json();
+
+                const indicator = document.getElementById('model-status-indicator');
+                const statusText = document.getElementById('model-status-text');
+                const statusDot = indicator.querySelector('div:first-child');
+
+                if (stats.artifacts_ready && stats.model_status === 'ready') {
+                    statusDot.style.background = '#00ff88';
+                    statusText.textContent = 'Ready';
+                    statusText.style.color = '#00ff88';
+                } else if (stats.model_status === 'unavailable') {
+                    statusDot.style.background = '#ff4444';
+                    statusText.textContent = 'Train Model';
+                    statusText.style.color = '#ff4444';
+                    statusText.style.cursor = 'pointer';
+                    statusText.onclick = trainModelHandler;
+                } else {
+                    statusDot.style.background = '#ffd700';
+                    statusText.textContent = 'Training...';
+                    statusText.style.color = '#ffd700';
+                }
+            } catch (e) {
+                console.error('Error checking model status:', e);
+                const statusDot = document.getElementById('model-status-indicator').querySelector('div:first-child');
+                statusDot.style.background = '#999';
+            }
+        }
+
+        async function trainModelHandler() {
+            const trainBtn = document.getElementById('train-btn');
+            try {
+                trainBtn.disabled = true;
+                trainBtn.textContent = 'Training...';
+
+                const resp = await fetch('/api/model/train', { method: 'POST' });
+                if (resp.ok) {
+                    alert('Training started in background. This may take 2-5 minutes.');
+                    const interval = setInterval(async () => {
+                        await updateModelStatus();
+                        const statusText = document.getElementById('model-status-text');
+                        if (statusText && statusText.textContent === 'Ready') {
+                            clearInterval(interval);
+                            trainBtn.disabled = false;
+                            trainBtn.textContent = 'Train Model';
+                            alert('Training completed successfully!');
+                        }
+                    }, 5000);
+                    setTimeout(() => {
+                        clearInterval(interval);
+                        trainBtn.disabled = false;
+                        trainBtn.textContent = 'Train Model';
+                    }, 30 * 60 * 1000);
+                } else {
+                    alert('Failed to start training');
+                    trainBtn.disabled = false;
+                    trainBtn.textContent = 'Train Model';
+                }
+            } catch (e) {
+                console.error('Training request error:', e);
+                alert('Error starting training');
+                trainBtn.disabled = false;
+                trainBtn.textContent = 'Train Model';
+            }
+        }
+
         // Initialize
+        updateSoControls();
+        updateSoThresholdLabel();
         loadDates();
+        updateModelStatus();
+        setInterval(updateModelStatus, 30000); // Check model status every 30 seconds
     </script>
 </body>
 </html>
+        function handleSoThresholdChange() {
+            updateSoThresholdLabel();
+            loadDynamicStats();
+            if (currentTarget === 'so') {
+                loadPredictions();
+            }
+        }

@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProjectionAI - Analysis</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        header {
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #3a3a5a;
+        }
+        h1 {
+            font-size: 2rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        .subtitle { color: #aaa; font-size: 0.95rem; }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            align-items: end;
+        }
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .filter-group label {
+            font-size: 0.8rem;
+            color: #aaa;
+        }
+        input[type="date"], select {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid #3a3a5a;
+            color: #eee;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 1rem;
+            min-width: 150px;
+        }
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.3s;
+        }
+        .btn:hover { background: #764ba2; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .section {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid #3a3a5a;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .section h2 {
+            font-size: 1.3rem;
+            margin-bottom: 20px;
+            color: #667eea;
+        }
+
+        .feature-coverage {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        .coverage-item {
+            background: rgba(100, 200, 255, 0.1);
+            border: 1px solid #667eea;
+            border-radius: 10px;
+            padding: 15px;
+            text-align: center;
+        }
+        .coverage-percent {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #00ff88;
+            margin-bottom: 5px;
+        }
+        .coverage-label {
+            font-size: 0.9rem;
+            color: #aaa;
+        }
+        .progress-bar {
+            background: rgba(0,0,0,0.3);
+            border-radius: 10px;
+            height: 8px;
+            margin-top: 10px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            height: 100%;
+            transition: width 0.3s;
+        }
+
+        .chart-container {
+            background: rgba(0,0,0,0.2);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .chart-container h3 {
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-box {
+            background: rgba(100, 200, 255, 0.05);
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .stat-value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #00ff88;
+        }
+        .stat-label {
+            font-size: 0.85rem;
+            color: #aaa;
+            margin-top: 5px;
+        }
+
+        .feature-importance {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .importance-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid #3a3a5a;
+        }
+        .importance-item:last-child { border-bottom: none; }
+        .importance-name { flex: 1; }
+        .importance-bar {
+            flex: 2;
+            background: rgba(0,0,0,0.3);
+            height: 20px;
+            border-radius: 4px;
+            margin: 0 10px;
+            overflow: hidden;
+        }
+        .importance-fill {
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            height: 100%;
+        }
+        .importance-value {
+            font-weight: bold;
+            min-width: 50px;
+            text-align: right;
+        }
+
+        .loading { text-align: center; padding: 40px; color: #aaa; }
+        .error { color: #ff4444; padding: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 Analysis Dashboard</h1>
+            <p class="subtitle">Historical performance analysis and model insights</p>
+        </header>
+
+        <div class="controls">
+            <div class="filter-group">
+                <label>From:</label>
+                <input type="date" id="from-date" />
+            </div>
+            <div class="filter-group">
+                <label>To:</label>
+                <input type="date" id="to-date" />
+            </div>
+            <button class="btn" onclick="loadAnalysis()">Analyze</button>
+        </div>
+
+        <!-- Feature Coverage Section -->
+        <div class="section">
+            <h2>📈 Feature Coverage</h2>
+            <div id="feature-coverage" class="feature-coverage">
+                <div class="loading">Select dates to view coverage</div>
+            </div>
+        </div>
+
+        <!-- Aggregated Stats Section -->
+        <div class="section">
+            <h2>📊 Aggregated Performance</h2>
+            <div id="aggregated-stats" class="stats-grid">
+                <div class="loading">Loading...</div>
+            </div>
+        </div>
+
+        <!-- Hit Rate by Signal Tier -->
+        <div class="section">
+            <h2>🎯 Hit Rate by Signal Tier</h2>
+            <div id="hit-rate-section" class="chart-container">
+                <div id="hit-rate-chart" class="loading">Loading...</div>
+            </div>
+        </div>
+
+        <!-- AUC Trend -->
+        <div class="section">
+            <h2>📈 AUC Trend</h2>
+            <div id="auc-section" class="chart-container">
+                <div id="auc-chart" class="loading">Loading...</div>
+            </div>
+        </div>
+
+        <!-- Feature Importance -->
+        <div class="section">
+            <h2>🔑 Feature Importance</h2>
+            <div id="feature-importance" class="feature-importance">
+                <div class="loading">Loading...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function setDefaultDates() {
+            const today = new Date();
+            const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+            document.getElementById('to-date').valueAsDate = today;
+            document.getElementById('from-date').valueAsDate = thirtyDaysAgo;
+        }
+
+        async function loadAnalysis() {
+            const fromDate = document.getElementById('from-date').value;
+            const toDate = document.getElementById('to-date').value;
+
+            if (!fromDate || !toDate) {
+                alert('Please select both dates');
+                return;
+            }
+
+            try {
+                const resp = await fetch(`/api/analysis/summary?from=${fromDate}&to=${toDate}`);
+                const data = await resp.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                displayFeatureCoverage(data.feature_coverage);
+                displayAggregatedStats(data.aggregated_stats);
+                displayHitRateByTier(data.hit_rate_by_tier);
+                displayAUCTrend(data.auc_trend);
+                displayFeatureImportance(data.feature_importance);
+            } catch (e) {
+                console.error('Error loading analysis:', e);
+                document.getElementById('aggregated-stats').innerHTML = `<div class="error">Error: ${e.message}</div>`;
+            }
+        }
+
+        function displayFeatureCoverage(coverage) {
+            const html = `
+                <div class="coverage-item">
+                    <div class="coverage-percent">${coverage.barrel_rate.toFixed(1)}%</div>
+                    <div class="coverage-label">Barrel Rate</div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: ${coverage.barrel_rate}%"></div></div>
+                </div>
+                <div class="coverage-item">
+                    <div class="coverage-percent">${coverage.weather_data.toFixed(1)}%</div>
+                    <div class="coverage-label">Weather Data</div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: ${coverage.weather_data}%"></div></div>
+                </div>
+                <div class="coverage-item">
+                    <div class="coverage-percent">${coverage.travel_data.toFixed(1)}%</div>
+                    <div class="coverage-label">Travel Data</div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: ${coverage.travel_data}%"></div></div>
+                </div>
+                <div class="coverage-item">
+                    <div class="coverage-percent">${coverage.park_factor.toFixed(1)}%</div>
+                    <div class="coverage-label">Park Factor</div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: ${coverage.park_factor}%"></div></div>
+                </div>
+            `;
+            document.getElementById('feature-coverage').innerHTML = html;
+        }
+
+        function displayAggregatedStats(stats) {
+            const html = `
+                <div class="stat-box">
+                    <div class="stat-value">${stats.total_picks}</div>
+                    <div class="stat-label">Total Picks</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">${stats.total_hits}</div>
+                    <div class="stat-label">Hits</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">${stats.overall_hit_rate.toFixed(1)}%</div>
+                    <div class="stat-label">Hit Rate</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" style="color: ${stats.roi >= 0 ? '#00ff88' : '#ff4444'}">${(stats.roi >= 0 ? '+' : '')}${stats.roi.toFixed(1)}%</div>
+                    <div class="stat-label">ROI</div>
+                </div>
+            `;
+            document.getElementById('aggregated-stats').innerHTML = html;
+        }
+
+        function displayHitRateByTier(tiers) {
+            let html = '<table style="width: 100%; border-collapse: collapse;">';
+            html += '<tr style="border-bottom: 1px solid #3a3a5a;"><th style="text-align: left; padding: 10px;">Signal Tier</th><th style="text-align: right; padding: 10px;">Hit Rate</th><th style="text-align: right; padding: 10px;">Count</th></tr>';
+
+            for (const [tier, data] of Object.entries(tiers)) {
+                const rate = data.hit_rate || 0;
+                html += `<tr style="border-bottom: 1px solid #3a3a5a;">
+                    <td style="padding: 10px;">${tier}</td>
+                    <td style="text-align: right; padding: 10px; color: #00ff88;">${rate.toFixed(1)}%</td>
+                    <td style="text-align: right; padding: 10px;">${data.count}</td>
+                </tr>`;
+            }
+
+            html += '</table>';
+            document.getElementById('hit-rate-chart').innerHTML = html;
+        }
+
+        function displayAUCTrend(trend) {
+            let html = '<table style="width: 100%; border-collapse: collapse;">';
+            html += '<tr style="border-bottom: 1px solid #3a3a5a;"><th style="text-align: left; padding: 10px;">Date</th><th style="text-align: right; padding: 10px;">AUC</th></tr>';
+
+            for (const point of trend) {
+                html += `<tr style="border-bottom: 1px solid #3a3a5a;">
+                    <td style="padding: 10px;">${point.date}</td>
+                    <td style="text-align: right; padding: 10px;">${point.auc.toFixed(4)}</td>
+                </tr>`;
+            }
+
+            html += '</table>';
+            document.getElementById('auc-chart').innerHTML = html;
+        }
+
+        function displayFeatureImportance(importance) {
+            if (!importance || importance.length === 0) {
+                document.getElementById('feature-importance').innerHTML = '<div class="loading">No feature importance data available</div>';
+                return;
+            }
+
+            const maxImportance = Math.max(...importance.map(f => f.importance));
+            let html = '';
+
+            for (const feat of importance.slice(0, 15)) {
+                const pct = (feat.importance / maxImportance) * 100;
+                html += `
+                    <div class="importance-item">
+                        <div class="importance-name">${feat.feature}</div>
+                        <div class="importance-bar"><div class="importance-fill" style="width: ${pct}%"></div></div>
+                        <div class="importance-value">${feat.importance.toFixed(3)}</div>
+                    </div>
+                `;
+            }
+
+            document.getElementById('feature-importance').innerHTML = html;
+        }
+
+        // Initialize with default dates
+        setDefaultDates();
+    </script>
+</body>
+</html>

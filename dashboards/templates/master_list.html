@@ -232,12 +232,12 @@
                 </select>
             </div>
             <div class="filter-group">
-                <label>Min Confidence</label>
-                <select id="filter-confidence" onchange="applyFilters()">
-                    <option value="">All Confidence</option>
-                    <option value="40">40%+ (Solid Bet)</option>
-                    <option value="30">30%+ (Value Play+)</option>
-                    <option value="20">20%+ (All)</option>
+                <label>Min Score</label>
+                <select id="filter-score" onchange="applyFilters()">
+                    <option value="">All Scores</option>
+                    <option value="70">70+ (Top Tier)</option>
+                    <option value="50">50+ (Strong)</option>
+                    <option value="30">30+ (All)</option>
                 </select>
             </div>
             <div class="filter-group">
@@ -273,7 +273,7 @@
                         <th onclick="sortTable('player')">Player ⬍</th>
                         <th onclick="sortTable('team')">Team ⬍</th>
                         <th onclick="sortTable('type')">Type ⬍</th>
-                        <th onclick="sortTable('confidence')">Confidence ⬍</th>
+                        <th onclick="sortTable('score')">Score ⬍</th>
                         <th onclick="sortTable('probability')">Model % ⬍</th>
                         <th onclick="sortTable('odds')">Odds ⬍</th>
                         <th onclick="sortTable('result')">Result ⬍</th>
@@ -316,21 +316,21 @@
 
         function applyFilters() {
             const classification = document.getElementById('filter-classification').value;
-            const minConfidence = document.getElementById('filter-confidence').value;
+            const minScore = document.getElementById('filter-score').value;
             const dateFrom = document.getElementById('filter-date-from').value;
             const dateTo = document.getElementById('filter-date-to').value;
             const resultFilter = document.getElementById('filter-result').value;
 
             filteredPredictions = allPredictions.filter(p => {
-                if (classification && p.hellraiser_classification !== classification) return false;
-                if (minConfidence && (p.hellraiser_confidence || 0) < parseFloat(minConfidence)) return false;
+                if (classification && p.signal_label !== classification) return false;
+                if (minScore && (p.score || 0) < parseFloat(minScore)) return false;
                 if (dateFrom && p.analysis_date < dateFrom) return false;
                 if (dateTo && p.analysis_date > dateTo) return false;
-                
+
                 if (resultFilter === 'hit' && !p.actual_hr) return false;
                 if (resultFilter === 'miss' && p.actual_hr !== false) return false;
                 if (resultFilter === 'pending' && p.actual_hr !== undefined) return false;
-                
+
                 return true;
             });
 
@@ -358,12 +358,12 @@
                         valB = b.team || '';
                         break;
                     case 'type':
-                        valA = a.hellraiser_classification || '';
-                        valB = b.hellraiser_classification || '';
+                        valA = a.signal_label || '';
+                        valB = b.signal_label || '';
                         break;
-                    case 'confidence':
-                        valA = a.hellraiser_confidence || 0;
-                        valB = b.hellraiser_confidence || 0;
+                    case 'score':
+                        valA = a.score || 0;
+                        valB = b.score || 0;
                         break;
                     case 'probability':
                         valA = a.probability || 0;
@@ -410,9 +410,9 @@
             }
 
             tbody.innerHTML = pageData.map(p => {
-                const classLabel = p.hellraiser_classification || 'Unknown';
+                const classLabel = p.signal_label || 'Unknown';
                 const classSlug = classLabel.replace(/\s+/g, '-');
-                const confidence = (p.hellraiser_confidence || 0).toFixed(1);
+                const score = (p.score || 0).toFixed(1);
                 const probability = ((p.probability || 0) * 100).toFixed(1);
                 const odds = p.odds_decimal ? p.odds_decimal.toFixed(1) : '-';
                 
@@ -429,7 +429,7 @@
                         <td>${p.player_name || 'Unknown'}</td>
                         <td>${p.team || '-'}</td>
                         <td><span class="classification-badge classification-${classSlug}">${classLabel}</span></td>
-                        <td>${confidence}</td>
+                        <td>${score}</td>
                         <td>${probability}%</td>
                         <td>${odds}</td>
                         <td>${resultBadge}</td>
@@ -486,7 +486,7 @@
 
         function clearFilters() {
             document.getElementById('filter-classification').value = '';
-            document.getElementById('filter-confidence').value = '';
+            document.getElementById('filter-score').value = '';
             document.getElementById('filter-date-from').value = '';
             document.getElementById('filter-date-to').value = '';
             document.getElementById('filter-result').value = '';

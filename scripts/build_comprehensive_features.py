@@ -218,7 +218,8 @@ def main():
             logger.info(f"   Batted ball trends merged: {df[trend_col].notna().sum()}/{len(df)}")
 
         # Save
-        output_path = '/home/futurepr0n/Development/ProjectionAI/data/comprehensive_features.csv'
+        from pathlib import Path
+        output_path = Path(__file__).parent.parent / 'data' / 'comprehensive_features.csv'
         df.to_csv(output_path, index=False)
         logger.info(f"✅ Saved comprehensive features to {output_path}")
         logger.info(f"   Total features: {len(df.columns)}")

@@ -54,7 +54,7 @@ pitcher_features = [
 ]
 
 # Game context
-context_features = ['is_home', 'confidence_score', 'odds_decimal']
+context_features = ['is_home']
 
 # All features
 all_features = hitter_features + pitcher_features + context_features
@@ -288,6 +288,11 @@ with open('data/matchup_model_results.json', 'w') as f:
     json.dump(results, f, indent=2)
 
 print(f"\n  Results saved to data/matchup_model_results.json")
+
+model.save_model('models/hr_model_v3.json')
+import joblib
+joblib.dump({'features': available_features, 'threshold': best_threshold}, 'models/hr_model_v3_meta.pkl')
+logger.info(f"✅ Model saved to models/hr_model_v3.json and models/hr_model_v3_meta.pkl")
 
 print("\n" + "=" * 80)
 print("PHASE 1 COMPLETE")

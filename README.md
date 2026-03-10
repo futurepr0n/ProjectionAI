@@ -1,135 +1,191 @@
-# ProjectionAI - MLB Betting Projection System
+# ProjectionAI
 
-## Overview
+ProjectionAI is a locally run MLB prediction project built around three probability products:
 
-ProjectionAI is a machine learning-based betting projection system for MLB home run predictions. The system uses XGBoost models to predict home run probability based on player matchup data, pitcher statistics, and game context.
+- hitter home run probability
+- hitter any-hit probability
+- starting pitcher strikeout probability versus the opposing team
 
-## Current Status
+The current system uses tabular ensembles for training and a Flask dashboard for exploration, review, and batch export.
 
-- **Phase 1 Complete**: Initial XGBoost model trained
-- **Model Performance**: ROC AUC 0.63, F1 Score 0.26
-- **Best Strategy**: Min Edge 8% (-71.2% ROI, +28.6% over baseline)
-- **Next Steps**: Add missing critical features (weather, travel, stadium dimensions)
+## Current Scope
 
-## Project Structure
+The active code path is:
 
-```
+`data/build_training_dataset.py` -> `models/train_models_v4.py` -> `dashboards/app.py`
+
+Starter strikeouts now have their own dataset and model flow:
+
+`data/build_pitcher_strikeout_dataset.py` -> `models/train_pitcher_strikeout_models.py` -> `dashboards/app.py`
+
+The dashboard supports:
+
+- `HR` predictions
+- `Hit` predictions
+- `SO` predictions with a slider for `3+`, `4+`, `5+`, and `6+` strikeouts
+- per-day team filtering
+- optional opponent inclusion for matchup review
+
+## Main Files
+
+```text
 ProjectionAI/
-├── data/                          # Training data and results
-│   ├── complete_dataset.csv         # Labeled training data
-│   ├── comprehensive_features.csv  # Feature engineering output
-│   └── matchup_model_results.json # Model performance metrics
-├── matchup_model_v3.py            # Phase 1 ML model
-├── generate_report.py              # Results dashboard generator
-├── start_server.py                # Local dashboard server
-├── README.md                      # This file
-└── .gitignore                     # Git ignore patterns
+├── dashboards/
+│   ├── app.py
+│   └── templates/
+│       ├── dashboard.html
+│       ├── analysis.html
+│       └── master_list.html
+├── data/
+│   ├── build_training_dataset.py
+│   ├── build_pitcher_strikeout_dataset.py
+│   ├── build_player_team_history.py
+│   ├── migrate_player_names.py
+│   ├── name_utils.py
+│   ├── complete_dataset.csv
+│   └── pitcher_strikeout_dataset.csv
+├── docs/
+│   ├── IMPLEMENTATION_BACKLOG.md
+│   ├── NAME_MATCHING_INVESTIGATION.md
+│   ├── MODEL_DOCUMENTATION.md
+│   └── PROJECT_MEMORY.md
+├── models/
+│   ├── train_models_v4.py
+│   ├── train_pitcher_strikeout_models.py
+│   └── artifacts/
+└── scripts/
+    └── generate_daily_predictions.py
 ```
 
-## Key Findings (Phase 1)
+## Modeling Summary
 
-### Model Performance
-| Metric | Value |
-|--------|-------|
-| ROC AUC | 0.6305 |
-| F1 Score | 0.2607 |
-| Precision | 16.9% |
-| Recall | 57.0% |
-| Best ROI | -71.2% (Min Edge 8%) |
+### HR / Hit
 
-### Top Predictive Features
-1. **pitcher_hr_per_9** (15.1%) - Home runs allowed per 9 innings
-2. **odds_decimal** (14.7%) - Bookmaker odds (data leakage warning)
-3. **confidence_score** (11.1%) - Existing confidence prediction
-4. **swing_optimization_score** (10.2%) - Swing mechanics
-5. **swing_attack_angle** (10.1%) - Launch angle
+- built from hitter-game rows in `data/complete_dataset.csv`
+- trained with XGBoost + LightGBM + logistic meta model
+- evaluated with temporal holdout instead of random final split
 
-### Missing Critical Features
-- Weather data (temperature, wind, humidity)
-- Travel distance and rest days
-- Stadium dimensions and park factors
-- Umpire strike zone analysis
+### Starter Strikeouts
 
-## Getting Started
+- built from `daily_lineups`, `games`, `pitching_stats`, `play_by_play_plays`, `play_by_play_pitches`
+- one row per starter-game
+- supports labels for `3+`, `4+`, `5+`, and `6+` strikeouts
+- includes:
+  - recent starter form
+  - recent opponent team strikeout form
+  - starter pitch-mix / arsenal features
+  - opponent team performance versus the starter's pitch types
+  - recent workload / leash features such as pitch counts and batters faced
 
-### Prerequisites
-- Python 3.8+
-- pandas, numpy, scikit-learn, xgboost
-- PostgreSQL (for data storage)
+## Name Resolution / Data Integration
 
-### Installation
+This project joins multiple baseball data sources that do not always use the same player naming conventions.
+
+Current protections:
+
+- centralized name normalization in `data/name_utils.py`
+- audit and review workflow in `data/migrate_player_names.py`
+- grouped pending-review exports under `output/`
+- team-aware validation and official roster / transaction history support
+
+Important docs:
+
+- [docs/NAME_MATCHING_INVESTIGATION.md](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/docs/NAME_MATCHING_INVESTIGATION.md)
+- [docs/IMPLEMENTATION_BACKLOG.md](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/docs/IMPLEMENTATION_BACKLOG.md)
+
+## Running Locally
+
+### Environment
+
+This repo is intended to be run locally with the project virtualenv.
 
 ```bash
-cd ~/Development/ProjectionAI
-pip install -r requirements.txt  # If you create one
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### Running the Model
+### Start the dashboard
 
 ```bash
-# Train the matchup prediction model
-python3 matchup_model_v3.py
-
-# Generate results report
-python3 generate_report.py
-
-# Start local dashboard
-python3 start_server.py
-# Open http://localhost:8000/results_report.html
+source venv/bin/activate
+python dashboards/app.py
 ```
 
-## Database Schema
+Dashboard URL:
 
-Tables on `192.168.1.23:5432/baseball_migration_test`:
-- `hitter_exit_velocity` - Exit velocity metrics (1,017 records)
-- `custom_pitcher_2025` - Pitcher spin rates and stats (757 records)
-- `custom_batter_2025` - Hitter x-stats and swing speed (609 records)
-- `daily_batted_ball_tracking` - Daily batted ball trends (32,126 records)
+`http://127.0.0.1:5002`
 
-## Roadmap
+### Rebuild datasets
 
-### Phase 1 ✅ Complete
-- [x] Data collection and feature engineering
-- [x] Baseline XGBoost model
-- [x] Betting strategy simulation
-- [x] Results dashboard
+Hitter dataset:
 
-### Phase 2: Feature Enhancement
-- [ ] Add historical weather data
-- [ ] Calculate travel distance and rest days
-- [ ] Add stadium dimension reference
-- [ ] Implement umpire zone analysis
+```bash
+source venv/bin/activate
+python data/build_training_dataset.py
+```
 
-### Phase 3: Model Improvement
-- [ ] Remove data leakage features
-- [ ] Implement cross-validation
-- [ ] Hyperparameter tuning
-- [ ] Ensemble methods
+Starter strikeout dataset:
 
-### Phase 4: Production
-- [ ] Real-time prediction pipeline
-- [ ] Automated data ingestion
-- [ ] Live betting dashboard
-- [ ] Bankroll tracking
+```bash
+source venv/bin/activate
+python data/build_pitcher_strikeout_dataset.py
+```
 
-## Results Dashboard
+### Train models
 
-The project includes an interactive HTML dashboard showing:
-- Model performance metrics
-- Betting strategy comparison
-- Feature importance visualization
-- Confusion matrix analysis
+HR / Hit ensembles:
 
-Access at: `http://localhost:8000/results_report.html`
+```bash
+source venv/bin/activate
+python models/train_models_v4.py
+```
 
-## License
+Starter strikeout threshold models:
 
-Proprietary - Not for commercial use.
+```bash
+source venv/bin/activate
+python models/train_pitcher_strikeout_models.py
+```
 
-## Contact
+### Generate batch predictions
 
-For questions or updates, contact Mark.
+All targets:
 
----
+```bash
+source venv/bin/activate
+python scripts/generate_daily_predictions.py 2025-09-02
+```
 
-**Note**: This is an experimental system. Do not make real betting decisions based on these predictions without thorough validation and understanding of the risks involved.
+Starter strikeouts only with threshold selection:
+
+```bash
+source venv/bin/activate
+python scripts/generate_daily_predictions.py 2025-09-02 --targets so --so-threshold 5
+```
+
+## Current Artifacts
+
+Model artifacts are saved under `models/artifacts/`.
+
+Important starter strikeout artifact prefixes:
+
+- `pitcher_so_3_plus`
+- `pitcher_so_4_plus`
+- `pitcher_so_5_plus`
+- `pitcher_so_6_plus`
+
+## Project Notes
+
+- This project is locally run and currently assumes local database access.
+- Hardcoded DB credentials are still used in parts of the codebase by design for the current workflow.
+- The backlog for active implementation work is tracked in [docs/IMPLEMENTATION_BACKLOG.md](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/docs/IMPLEMENTATION_BACKLOG.md).
+- The repo contains older exploratory scripts and docs; the files listed above reflect the current working path.
+
+## Next Priorities
+
+See [docs/IMPLEMENTATION_BACKLOG.md](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/docs/IMPLEMENTATION_BACKLOG.md), but the current highest-value open items are:
+
+- prior team-vs-starter / batter-vs-pitcher matchup features with leakage controls
+- weather / park / environment improvements
+- calibration and betting-oriented backtesting
+- reviewed team-mismatch badges in the dashboard

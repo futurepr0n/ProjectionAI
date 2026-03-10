@@ -59,22 +59,20 @@ class HRModelTrainer:
             'swing_optimization_score',
             'swing_attack_angle',
             'swing_bat_speed',
-            
+
             # Pitcher quality metrics
             'pitcher_era',
             'pitcher_hr_per_9',
             'pitcher_k_per_9',
             'pitcher_whip',
-            
+
             # Play-by-play pitcher features
             'k_rate_pct',
             'hr_rate_pct',
             'fly_ball_pct',
-            
+
             # Context
-            'is_home',
-            'confidence_score',
-            'odds_decimal'
+            'is_home'
         ]
 
         # Filter to available columns
@@ -92,7 +90,7 @@ class HRModelTrainer:
 
         return X, y
 
-    def train_model(self, X: pd.DataFrame, y: pd.Series, 
+    def train_model(self, X: pd.DataFrame, y: pd.Series,
                     test_size: float = 0.2) -> Dict:
         """
         Train XGBoost model with cross-validation
@@ -106,13 +104,10 @@ class HRModelTrainer:
             columns=X.columns
         )
 
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_imputed, y, 
-            test_size=test_size, 
-            random_state=42,
-            stratify=y
-        )
+        # Time-based split
+        split_idx = int(len(X_imputed) * (1 - test_size))
+        X_train, X_test = X_imputed.iloc[:split_idx], X_imputed.iloc[split_idx:]
+        y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
 
         logger.info(f"   Training samples: {len(X_train):,}")
         logger.info(f"   Test samples: {len(X_test):,}")

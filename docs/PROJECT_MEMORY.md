@@ -1,0 +1,214 @@
+# ProjectionAI Project Memory
+
+Purpose: a short working reference for future coding passes in this repository. This file is based on the current codebase, not just older planning docs.
+
+## What This Project Is
+
+ProjectionAI is an MLB betting projection system centered on batter prop prediction. The current code supports at least three binary targets:
+
+- `hr`: home run
+- `hit`: at least one hit
+- `so`: at least one strikeout
+
+The active stack is Python + PostgreSQL + Flask, with model artifacts stored on disk under `models/artifacts/`.
+
+## Current Architecture
+
+### 1. Data preparation
+
+Primary file: [data/build_training_dataset.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/build_training_dataset.py)
+
+This is the most important data pipeline in the repo right now.
+
+- Builds a training dataset from `play_by_play_plays` joined to `games`
+- Creates one row per `(game_id, batter)`
+- Derives labels:
+  - `label` for HR
+  - `label_hit` for hit
+  - `label_so` for strikeout
+- Enriches with:
+  - hitter EV / barrel / sweet spot
+  - batter xStats
+  - recent 14-day rates
+  - opponent pitching 30-day rolling stats
+  - park/travel features
+  - placeholder weather defaults
+
+Inference helpers also live here:
+
+- `load_todays_picks()`
+- `build_for_prediction()`
+
+Those methods enrich rows from `hellraiser_picks` for live scoring.
+
+### 2. Feature utilities
+
+Primary file: [data/feature_engineering.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/feature_engineering.py)
+
+Important responsibilities:
+
+- hardcoded fallback park factors
+- stadium location metadata
+- travel fatigue features
+- DB-backed enrichment helpers
+
+This file mixes static reference data with DB queries. It is a utility layer, not a full feature store abstraction.
+
+### 3. Name normalization
+
+Primary file: [data/name_utils.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/name_utils.py)
+
+Supporting file: [data/migrate_player_names.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/migrate_player_names.py)
+
+The newer pipeline depends on canonical player-name mapping to join across inconsistent source systems.
+
+### 4. Model training
+
+Primary file: [models/train_models_v4.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/models/train_models_v4.py)
+
+This appears to be the current training path.
+
+- Reads `data/complete_dataset.csv`
+- Trains separate models for `hr`, `hit`, and `so`
+- Uses XGBoost + LightGBM + logistic-regression meta learner
+- Saves artifacts to `models/artifacts/`
+
+Artifact pattern:
+
+- `{target}_xgb.json`
+- `{target}_lgb.txt`
+- `{target}_meta.pkl`
+
+Older training code still exists in [models/train.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/models/train.py) and related files. Treat that path as legacy unless the user says otherwise.
+
+### 5. Serving / dashboard
+
+Primary file: [dashboards/app.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/dashboards/app.py)
+
+This is the main application entry point.
+
+- Flask app
+- loads ensemble artifacts for all three targets
+- opens a PostgreSQL connection on startup
+- loads `data/complete_dataset.csv` on startup
+- computes signal thresholds from model output percentiles
+- exposes the live prediction/dashboard path through templates in `dashboards/templates/`
+
+### 6. Batch prediction
+
+Primary file: [scripts/generate_daily_predictions.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/scripts/generate_daily_predictions.py)
+
+This script:
+
+- loads today’s picks from `hellraiser_picks`
+- enriches them through `DatasetBuilder.build_for_prediction()`
+- scores HR probabilities
+- writes JSON output to `output/`
+
+Note: this script currently appears HR-only even though the app loads HR/HIT/SO ensembles.
+
+## Likely Primary Workflow
+
+For training:
+
+1. Build dataset with [data/build_training_dataset.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/build_training_dataset.py)
+2. Save to `data/complete_dataset.csv`
+3. Train ensembles with [models/train_models_v4.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/models/train_models_v4.py)
+4. Serve or reload via [dashboards/app.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/dashboards/app.py)
+
+For live inference:
+
+1. Pull rows from `hellraiser_picks`
+2. Enrich via `build_for_prediction()`
+3. Score with saved artifacts
+4. Surface via Flask dashboard or JSON output
+
+## Runtime Dependencies
+
+Primary dependency file: [requirements.txt](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/requirements.txt)
+
+Observed key dependencies:
+
+- `Flask`
+- `psycopg2-binary`
+- `pandas`
+- `numpy`
+- `xgboost`
+- `lightgbm`
+- `scikit-learn`
+- `joblib`
+
+## Database Assumptions
+
+The code frequently assumes a PostgreSQL database named `baseball_migration_test`.
+
+Observed tables referenced in active code include:
+
+- `play_by_play_plays`
+- `games`
+- `hitter_exit_velocity`
+- `custom_batter_2025`
+- `pitching_stats`
+- `hellraiser_picks`
+- `stadiums`
+- `player_name_map`
+
+The repo currently contains hardcoded default DB connection values in active files. That is an operational and security smell and should be treated as technical debt.
+
+## Current State Notes
+
+- The repository contains many planning / summary markdown files at the root.
+- Some of those docs describe older files such as `matchup_model_v3.py` as the main path.
+- The codebase now appears to have shifted toward:
+  - `data/build_training_dataset.py`
+  - `models/train_models_v4.py`
+  - `dashboards/app.py`
+
+When docs and code disagree, trust the code first.
+
+## High-Signal Files
+
+- [dashboards/app.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/dashboards/app.py)
+- [data/build_training_dataset.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/build_training_dataset.py)
+- [data/feature_engineering.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/feature_engineering.py)
+- [data/name_utils.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/name_utils.py)
+- [data/migrate_player_names.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/migrate_player_names.py)
+- [models/train_models_v4.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/models/train_models_v4.py)
+- [scripts/generate_daily_predictions.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/scripts/generate_daily_predictions.py)
+
+## Known Risks / Things To Verify Before Major Changes
+
+- `dashboards/app.py` opens the DB and dataset at startup, so many changes can have immediate runtime side effects.
+- Training and serving appear to depend on exact feature-name alignment from `meta.pkl`.
+- `requirements.txt` has duplicate entries and may not be tightly curated.
+- The worktree is already dirty; do not assume a clean baseline.
+- Several top-level docs look stale relative to current code.
+- Weather features are still placeholder defaults in the newer dataset builder.
+- Batch prediction coverage for HIT/SO may lag behind the newer multi-target model setup.
+
+## Practical Starting Points For Future Work
+
+If the task is about:
+
+- model quality: start with [models/train_models_v4.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/models/train_models_v4.py) and [data/build_training_dataset.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/build_training_dataset.py)
+- live prediction bugs: start with [dashboards/app.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/dashboards/app.py)
+- missing player matches: start with [data/name_utils.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/name_utils.py) and [data/migrate_player_names.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/migrate_player_names.py)
+- feature coverage gaps: start with [data/feature_engineering.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/feature_engineering.py)
+- daily automation: start with [scripts/generate_daily_predictions.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/scripts/generate_daily_predictions.py)
+
+## Minimal Command Reference
+
+Typical local commands inferred from the repo:
+
+```bash
+python data/build_training_dataset.py
+python models/train_models_v4.py
+python scripts/generate_daily_predictions.py
+python dashboards/app.py
+```
+
+## Bottom Line
+
+The repo is in a transition state from older HR-only experiments toward a fuller multi-target pipeline. The clearest current backbone is:
+
+`build_training_dataset.py -> train_models_v4.py -> dashboards/app.py`
