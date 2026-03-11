@@ -313,7 +313,7 @@
                     <div style="width: 10px; height: 10px; border-radius: 50%; background: #999;"></div>
                     <div style="display: flex; flex-direction: column; align-items: flex-start;">
                         <div class="stat-value" id="model-status-text" style="font-size: 0.9rem;">Checking...</div>
-                        <div class="stat-label">Model Status</div>
+                        <div class="stat-label">Artifacts</div>
                     </div>
                 </div>
             </div>
@@ -335,7 +335,7 @@
             </div>
             <div class="filter-group">
                 <label>Date:</label>
-                <select id="date-select" class="date-input">
+                <select id="date-select" class="date-input" onchange="loadPredictions()">
                     <option value="">Loading dates...</option>
                 </select>
             </div>
@@ -362,10 +362,8 @@
                     <span>Include Opponent</span>
                 </label>
             </div>
-            <button class="btn" id="load-btn" onclick="loadPredictions()">Load Predictions</button>
             <button class="btn btn-clear" onclick="clearFilters()">Clear Filters</button>
             <button class="btn" onclick="showAllDates()">View All Dates</button>
-            <button class="btn" id="train-btn" title="Retrain on latest season data. Run weekly or when model accuracy drops. Training takes ~2-5 minutes." onclick="trainModelHandler()">Train Model</button>
         </div>
 
         <div id="summary-box" class="summary-box" style="display: none;">
@@ -643,13 +641,9 @@
         async function loadPredictions() {
             const selectedDate = document.getElementById('date-select').value;
             if (!selectedDate) {
-                alert('Please select a date');
+                document.getElementById('all-grid').innerHTML = '<div class="loading">Select a date to view predictions</div>';
                 return;
             }
-
-            const btn = document.getElementById('load-btn');
-            btn.disabled = true;
-            btn.textContent = 'Loading...';
 
             document.getElementById('all-grid').innerHTML = '<div class="loading">Loading predictions...</div>';
 
@@ -670,9 +664,6 @@
             } catch (e) {
                 console.error('Error:', e);
                 document.getElementById('all-grid').innerHTML = `<div class="error">Error: ${e.message}</div>`;
-            } finally {
-                btn.disabled = false;
-                btn.textContent = 'Load Predictions';
             }
         }
         
@@ -930,58 +921,25 @@
                     statusDot.style.background = '#00ff88';
                     statusText.textContent = 'Ready';
                     statusText.style.color = '#00ff88';
+                    statusText.style.cursor = 'default';
+                    statusText.onclick = null;
                 } else if (stats.model_status === 'unavailable') {
                     statusDot.style.background = '#ff4444';
-                    statusText.textContent = 'Train Model';
+                    statusText.textContent = 'Missing';
                     statusText.style.color = '#ff4444';
-                    statusText.style.cursor = 'pointer';
-                    statusText.onclick = trainModelHandler;
+                    statusText.style.cursor = 'default';
+                    statusText.onclick = null;
                 } else {
                     statusDot.style.background = '#ffd700';
-                    statusText.textContent = 'Training...';
+                    statusText.textContent = 'Reloading...';
                     statusText.style.color = '#ffd700';
+                    statusText.style.cursor = 'default';
+                    statusText.onclick = null;
                 }
             } catch (e) {
                 console.error('Error checking model status:', e);
                 const statusDot = document.getElementById('model-status-indicator').querySelector('div:first-child');
                 statusDot.style.background = '#999';
-            }
-        }
-
-        async function trainModelHandler() {
-            const trainBtn = document.getElementById('train-btn');
-            try {
-                trainBtn.disabled = true;
-                trainBtn.textContent = 'Training...';
-
-                const resp = await fetch('/api/model/train', { method: 'POST' });
-                if (resp.ok) {
-                    alert('Training started in background. This may take 2-5 minutes.');
-                    const interval = setInterval(async () => {
-                        await updateModelStatus();
-                        const statusText = document.getElementById('model-status-text');
-                        if (statusText && statusText.textContent === 'Ready') {
-                            clearInterval(interval);
-                            trainBtn.disabled = false;
-                            trainBtn.textContent = 'Train Model';
-                            alert('Training completed successfully!');
-                        }
-                    }, 5000);
-                    setTimeout(() => {
-                        clearInterval(interval);
-                        trainBtn.disabled = false;
-                        trainBtn.textContent = 'Train Model';
-                    }, 30 * 60 * 1000);
-                } else {
-                    alert('Failed to start training');
-                    trainBtn.disabled = false;
-                    trainBtn.textContent = 'Train Model';
-                }
-            } catch (e) {
-                console.error('Training request error:', e);
-                alert('Error starting training');
-                trainBtn.disabled = false;
-                trainBtn.textContent = 'Train Model';
             }
         }
 

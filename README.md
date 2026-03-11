@@ -155,6 +155,8 @@ source venv/bin/activate
 python models/train_pitcher_strikeout_models.py
 ```
 
+Training is intended to be run from the terminal by a developer or agent. The dashboard serves saved artifacts and should not be treated as the training surface.
+
 ### Generate batch predictions
 
 All targets:
