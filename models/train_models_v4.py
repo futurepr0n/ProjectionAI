@@ -39,6 +39,18 @@ def _class_weight(y: pd.Series) -> float:
     return (neg / pos) if pos > 0 else 1.0
 
 
+def _positive_class_proba(model, X: pd.DataFrame) -> np.ndarray:
+    proba = model.predict_proba(X)
+    if proba.ndim == 1:
+        return proba.astype(float)
+    if proba.shape[1] == 1:
+        classes = getattr(model, 'classes_', np.array([0]))
+        single_class = int(classes[0]) if len(classes) else 0
+        fill_value = 1.0 if single_class == 1 else 0.0
+        return np.full(len(X), fill_value, dtype=float)
+    return proba[:, 1].astype(float)
+
+
 class ModelPipeline:
 
     def train_hr_model(self, df: pd.DataFrame) -> Dict:
@@ -203,8 +215,8 @@ class ModelPipeline:
             xgb_model = self._fit_xgb(X_tr_imp, y_tr, X_val_imp, y_val)
             lgb_model = self._fit_lgb(X_tr_imp, y_tr, X_val_imp, y_val)
 
-            xgb_proba = xgb_model.predict_proba(X_val_imp)[:, 1]
-            lgb_proba = lgb_model.predict_proba(X_val_imp)[:, 1]
+            xgb_proba = _positive_class_proba(xgb_model, X_val_imp)
+            lgb_proba = _positive_class_proba(lgb_model, X_val_imp)
 
             oof_xgb[val_idx] = xgb_proba
             oof_lgb[val_idx] = lgb_proba
@@ -235,7 +247,7 @@ class ModelPipeline:
         else:
             meta_model = LogisticRegression(max_iter=1000)
             meta_model.fit(meta_train_X, meta_train_y)
-            cv_meta_metrics = self._metrics(meta_train_y, meta_model.predict_proba(meta_train_X)[:, 1])
+            cv_meta_metrics = self._metrics(meta_train_y, _positive_class_proba(meta_model, meta_train_X))
 
         X_base_train, X_base_eval, y_base_train, y_base_eval = self._train_eval_tail_split(X_train, y_train, train_dates)
         train_medians = X_base_train.median()
@@ -246,10 +258,10 @@ class ModelPipeline:
         final_xgb = self._fit_xgb(X_base_train_imp, y_base_train, X_base_eval_imp, y_base_eval)
         final_lgb = self._fit_lgb(X_base_train_imp, y_base_train, X_base_eval_imp, y_base_eval)
 
-        holdout_xgb = final_xgb.predict_proba(X_holdout_imp)[:, 1]
-        holdout_lgb = final_lgb.predict_proba(X_holdout_imp)[:, 1]
+        holdout_xgb = _positive_class_proba(final_xgb, X_holdout_imp)
+        holdout_lgb = _positive_class_proba(final_lgb, X_holdout_imp)
         holdout_meta_X = pd.DataFrame({'xgb': holdout_xgb, 'lgb': holdout_lgb})
-        holdout_meta = meta_model.predict_proba(holdout_meta_X)[:, 1]
+        holdout_meta = _positive_class_proba(meta_model, holdout_meta_X)
 
         holdout_metrics = {
             'xgb': self._metrics(y_holdout, holdout_xgb),

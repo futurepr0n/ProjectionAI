@@ -60,9 +60,14 @@ Purpose: track high-value improvements and check them off as they are implemente
 
 ## Data / Features
 
+- [ ] Add optional odds / line ingestion for Hit and SO products for future seasons:
+  - sportsbook line / price history by prop type
+  - keep odds-derived features optional so models remain stable when odds are unavailable
+  - store source-availability flags so backtests can separate model signal from market signal
 - [ ] Replace placeholder weather defaults with real historical and game-time weather features.
 - [ ] Replace `pa_count` with a true pregame projection or lineup-context feature if it is being used for inference.
 - [ ] Add handedness splits for batter vs pitcher.
+- [x] Add hitter pitch-type matchup features based on opposing pitcher arsenal and batter results versus pitch types.
 - [ ] Add projected lineup spot and expected plate appearances.
 - [ ] Add park/environment features that are directionally meaningful for HRs:
   - wind direction
@@ -73,6 +78,8 @@ Purpose: track high-value improvements and check them off as they are implemente
   - presence indicators
   - source freshness
   - fallback provenance
+- [x] Optimize slow dataset-build steps such as row-by-row travel fatigue enrichment so full rebuilds stay practical as features expand.
+- [x] Clean corrupted play-by-play batter names in the hitter training spine so action-text suffixes and `Unknown` placeholders do not leak into training/serving rows.
 - [x] Build a starter-level strikeout dataset from `daily_lineups`, `games`, `pitching_stats`, and team batting history instead of using hitter rows.
 - [x] Add starter rolling-form features and opponent team recent strikeout-form features for the starter strikeout dataset.
 - [x] Generate flexible starter strikeout labels (`3+`, `4+`, `5+`, `6+`) so the final betting threshold can be chosen explicitly.
@@ -80,12 +87,16 @@ Purpose: track high-value improvements and check them off as they are implemente
   - starter primary pitch mix
   - opponent team results versus similar pitch types
   - opponent team swing-and-miss tendencies by pitch type
-- [ ] Add prior batter-vs-pitcher / team-vs-starter matchup features with careful leakage controls.
+- [x] Add prior team-vs-starter matchup features with careful leakage controls.
+- [x] Add prior batter-vs-pitcher matchup features with careful leakage controls.
 - [x] Add probable-pitch-count / leash features so strikeout probabilities reflect expected workload, not just skill rate.
+- [ ] Decide whether the legacy hitter-side `label_so` target should be removed entirely now that starter strikeouts are the product path.
 
 ## Product / Serving
 
 - [x] Confirm the Flask app boots cleanly and serves locally.
+- [ ] Add player-game deduplication safeguards in hitter prediction serving so the dashboard/export does not show duplicate rows for the same player slate entry.
+- [x] Add player-game deduplication safeguards in hitter prediction serving so the dashboard/export does not show duplicate rows for the same player slate entry.
 - [x] Add a per-day team selector in the dashboard so predictions can be narrowed to one club quickly.
 - [x] Add an "include opponent" dashboard filter so one team selection can also show the day’s opposing-side matchup context.
 - [x] Expand batch prediction in [scripts/generate_daily_predictions.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/scripts/generate_daily_predictions.py) so it matches the app and scores all three supported probabilities:
@@ -98,6 +109,11 @@ Purpose: track high-value improvements and check them off as they are implemente
 - [ ] Decide whether the default strikeout view should stay `3+ K` or become sportsbook-line-aware per game/date.
 - [ ] Add a visible "possible team mismatch" badge/tooltip to prediction rows when alias resolution is allowed but historical team validation remains unresolved.
 - [ ] Unify signal logic so probabilities, thresholds, and rank-based labels are not competing systems.
+- [ ] Add experimental bankroll / position-sizing backtests:
+  - flat staking
+  - confidence-weighted staking
+  - edge-weighted staking when odds are available
+  - selection-first comparisons (top-N, confidence cutoffs, edge cutoffs)
 - [ ] Add model/artifact versioning to responses and generated output.
 - [ ] Add endpoint-level health checks for DB, dataset, and artifacts.
 

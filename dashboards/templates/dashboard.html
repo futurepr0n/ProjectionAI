@@ -389,7 +389,7 @@
                 </div>
                 <div class="summary-metric">
                     <div class="value" id="sum-roi">-</div>
-                    <div class="label">ROI</div>
+                    <div class="label" id="sum-roi-label">Odds ROI</div>
                 </div>
             </div>
         </div>
@@ -549,6 +549,45 @@
                 roiElement.style.color = '#667eea';
             }
         }
+
+        function summarizeOutcomes(predictions, resultKey) {
+            let completedPicks = 0;
+            let correctPicks = 0;
+            let oddsCompletedPicks = 0;
+            let totalProfit = 0;
+
+            for (const pred of predictions) {
+                if (pred[resultKey] === undefined) {
+                    continue;
+                }
+
+                completedPicks += 1;
+                const odds = pred.odds_decimal;
+                const hasOdds = odds && odds > 1;
+
+                if (pred[resultKey] === true) {
+                    correctPicks += 1;
+                    if (hasOdds) {
+                        oddsCompletedPicks += 1;
+                        totalProfit += (odds - 1);
+                    }
+                } else if (hasOdds) {
+                    oddsCompletedPicks += 1;
+                    totalProfit -= 1;
+                }
+            }
+
+            const hitRate = completedPicks > 0 ? (correctPicks / completedPicks * 100) : 0;
+            const roi = oddsCompletedPicks > 0 ? (totalProfit / oddsCompletedPicks * 100) : null;
+
+            return {
+                completedPicks,
+                correctPicks,
+                oddsCompletedPicks,
+                hitRate,
+                roi
+            };
+        }
         
         function applyFilters() {
             const classification = document.getElementById('filter-classification').value;
@@ -697,42 +736,38 @@
             const filterLabel = filterParts.length > 0 ? ` (${filterParts.join(', ')})` : '';
             document.getElementById('summary-filter').textContent = filterLabel;
 
-            // Calculate filtered stats with ROI
-            let totalPicks = results.length;
-            let completedPicks = 0;
-            let correctPicks = 0;
-            let totalProfit = 0;
-
-            for (const r of results) {
-                if (r[resultKey] !== undefined) {
-                    completedPicks += 1;
-                    const odds = r['odds_decimal'];
-                    if (r[resultKey] === true) {
-                        correctPicks += 1;
-                        if (odds && odds > 1) {
-                            totalProfit += (odds - 1);
-                        }
-                    } else {
-                        totalProfit -= 1;
-                    }
-                }
-            }
-
-            const hitRate = completedPicks > 0 ? (correctPicks / completedPicks * 100) : 0;
-            const roi = completedPicks > 0 ? (totalProfit / completedPicks * 100) : 0;
+            const totalPicks = results.length;
+            const outcomeSummary = summarizeOutcomes(results, resultKey);
+            const hitRate = outcomeSummary.hitRate;
             
             document.getElementById('sum-total').textContent = totalPicks;
-            document.getElementById('sum-with-results').textContent = completedPicks;
-            document.getElementById('sum-correct').textContent = correctPicks;
+            document.getElementById('sum-with-results').textContent = outcomeSummary.completedPicks;
+            document.getElementById('sum-correct').textContent = outcomeSummary.correctPicks;
             document.getElementById('sum-hitrate').textContent = hitRate.toFixed(1) + '%';
             
             const roiElement = document.getElementById('sum-roi');
-            roiElement.textContent = (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%';
-            if (roi > 0) {
-                roiElement.className = 'value positive';
-            } else if (roi < 0) {
-                roiElement.className = 'value negative';
+            const roiLabel = document.getElementById('sum-roi-label');
+            if (outcomeSummary.roi === null) {
+                roiElement.textContent = 'N/A';
+                roiElement.className = 'value';
+                roiLabel.textContent = 'Odds ROI';
             } else {
+                roiElement.textContent = (outcomeSummary.roi >= 0 ? '+' : '') + outcomeSummary.roi.toFixed(1) + '%';
+                roiLabel.textContent = `Odds ROI (${outcomeSummary.oddsCompletedPicks})`;
+                if (outcomeSummary.roi > 0) {
+                    roiElement.className = 'value positive';
+                } else if (outcomeSummary.roi < 0) {
+                    roiElement.className = 'value negative';
+                } else {
+                    roiElement.className = 'value';
+                }
+            }
+            
+            if (outcomeSummary.roi > 0) {
+                roiElement.className = 'value positive';
+            } else if (outcomeSummary.roi < 0) {
+                roiElement.className = 'value negative';
+            } else if (outcomeSummary.roi !== null) {
                 roiElement.className = 'value';
             }
             
@@ -956,9 +991,7 @@
         loadDates();
         updateModelStatus();
         setInterval(updateModelStatus, 30000); // Check model status every 30 seconds
-    </script>
-</body>
-</html>
+
         function handleSoThresholdChange() {
             updateSoThresholdLabel();
             loadDynamicStats();
@@ -966,3 +999,6 @@
                 loadPredictions();
             }
         }
+    </script>
+</body>
+</html>

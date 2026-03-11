@@ -113,6 +113,7 @@ class PitcherStrikeoutDatasetBuilder:
         starter_df = starter_df.merge(actuals_df, on=['game_id', 'team'], how='left')
 
         starter_df = self._attach_pitcher_rolling(starter_df)
+        starter_df = self._attach_prior_opponent_history(starter_df)
         starter_df = self._attach_pitcher_season_metrics(starter_df)
         starter_df = self._attach_pitcher_arsenal_metrics(starter_df)
         starter_df = self._attach_opponent_team_form(starter_df)
@@ -268,11 +269,20 @@ class PitcherStrikeoutDatasetBuilder:
                 ps.game_id,
                 g.game_date,
                 ps.player_name,
+                ps.team,
+                CASE
+                    WHEN ps.team = g.home_team THEN g.away_team
+                    ELSE g.home_team
+                END AS opponent_team,
                 ps.innings_pitched,
                 ps.strikeouts,
                 ps.earned_runs,
                 ps.hits,
-                ps.walks
+                ps.walks,
+                ROW_NUMBER() OVER (
+                    PARTITION BY ps.game_id, ps.team
+                    ORDER BY ps.innings_pitched DESC, ps.strikeouts DESC, ps.id
+                ) AS starter_rank
             FROM pitching_stats ps
             JOIN games g ON ps.game_id = g.game_id
             WHERE g.game_date IS NOT NULL
@@ -285,6 +295,9 @@ class PitcherStrikeoutDatasetBuilder:
         df['player_name_normalized'] = df['player_name'].apply(normalize_name)
         df['player_name_key'] = df['player_name'].apply(_pitcher_name_key)
         df['game_date'] = pd.to_datetime(df['game_date'])
+        df['team'] = df['team'].apply(_normalize_team_code)
+        df['opponent_team'] = df['opponent_team'].apply(_normalize_team_code)
+        df['is_starter'] = df['starter_rank'].fillna(99).astype(int) == 1
 
         cursor.execute(
             """
@@ -367,6 +380,78 @@ class PitcherStrikeoutDatasetBuilder:
         starter_df = starter_df.join(rolling_df, how='left')
         starter_df = starter_df.drop(columns=['game_date_ts'])
         logger.info("Attached rolling pitcher features")
+        return starter_df
+
+    def _attach_prior_opponent_history(self, starter_df: pd.DataFrame) -> pd.DataFrame:
+        history = self._load_pitching_history()
+        if history.empty:
+            for col in (
+                'starter_prior_starts_vs_opp',
+                'starter_prior_ip_vs_opp',
+                'starter_prior_so_vs_opp',
+                'starter_prior_k_per_9_vs_opp',
+                'starter_prior_avg_pitches_vs_opp',
+                'starter_prior_avg_batters_faced_vs_opp',
+                'starter_days_since_last_vs_opp',
+                'starter_last_so_vs_opp',
+            ):
+                starter_df[col] = np.nan
+            return starter_df
+
+        starter_history = history[history['is_starter']].copy()
+        starter_df = starter_df.copy()
+        starter_df['game_date_ts'] = pd.to_datetime(starter_df['game_date'])
+        starter_df['team_normalized'] = starter_df['team'].apply(_normalize_team_code)
+        starter_df['opponent_team_normalized'] = starter_df['opponent_team'].apply(_normalize_team_code)
+
+        matchup_records = []
+        for pitcher_name_key, pitcher_rows in starter_df.groupby('starter_name_key', dropna=False):
+            history_rows = starter_history[starter_history['player_name_key'] == pitcher_name_key].copy()
+            if history_rows.empty:
+                for idx in pitcher_rows.index:
+                    matchup_records.append({
+                        'row_index': idx,
+                        'starter_prior_starts_vs_opp': 0,
+                        'starter_prior_ip_vs_opp': np.nan,
+                        'starter_prior_so_vs_opp': np.nan,
+                        'starter_prior_k_per_9_vs_opp': np.nan,
+                        'starter_prior_avg_pitches_vs_opp': np.nan,
+                        'starter_prior_avg_batters_faced_vs_opp': np.nan,
+                        'starter_days_since_last_vs_opp': np.nan,
+                        'starter_last_so_vs_opp': np.nan,
+                    })
+                continue
+
+            history_rows = history_rows.sort_values('game_date')
+            for idx, row in pitcher_rows.sort_values('game_date_ts').iterrows():
+                prior = history_rows[
+                    (history_rows['game_date'] < row['game_date_ts']) &
+                    (history_rows['opponent_team'] == row['opponent_team_normalized'])
+                ].copy()
+
+                total_ip = pd.to_numeric(prior['innings_pitched'], errors='coerce').sum() if not prior.empty else 0.0
+                total_so = pd.to_numeric(prior['strikeouts'], errors='coerce').sum() if not prior.empty else 0.0
+                prior_pitch_counts = pd.to_numeric(prior.get('pitch_count'), errors='coerce')
+                prior_batters_faced = pd.to_numeric(prior.get('batters_faced'), errors='coerce')
+                last_game_date = prior['game_date'].max() if not prior.empty else pd.NaT
+                last_so = pd.to_numeric(prior['strikeouts'], errors='coerce').iloc[-1] if not prior.empty else np.nan
+
+                matchup_records.append({
+                    'row_index': idx,
+                    'starter_prior_starts_vs_opp': int(len(prior)),
+                    'starter_prior_ip_vs_opp': float(total_ip) if len(prior) > 0 else np.nan,
+                    'starter_prior_so_vs_opp': float(total_so) if len(prior) > 0 else np.nan,
+                    'starter_prior_k_per_9_vs_opp': float(total_so / total_ip * 9) if total_ip > 0 else np.nan,
+                    'starter_prior_avg_pitches_vs_opp': float(prior_pitch_counts.mean()) if prior_pitch_counts.notna().any() else np.nan,
+                    'starter_prior_avg_batters_faced_vs_opp': float(prior_batters_faced.mean()) if prior_batters_faced.notna().any() else np.nan,
+                    'starter_days_since_last_vs_opp': float((row['game_date_ts'] - last_game_date).days) if pd.notna(last_game_date) else np.nan,
+                    'starter_last_so_vs_opp': float(last_so) if not pd.isna(last_so) else np.nan,
+                })
+
+        matchup_df = pd.DataFrame(matchup_records).set_index('row_index')
+        starter_df = starter_df.join(matchup_df, how='left')
+        starter_df = starter_df.drop(columns=['game_date_ts', 'team_normalized', 'opponent_team_normalized'])
+        logger.info("Attached prior starter-vs-opponent matchup history")
         return starter_df
 
     def _attach_pitcher_season_metrics(self, starter_df: pd.DataFrame) -> pd.DataFrame:

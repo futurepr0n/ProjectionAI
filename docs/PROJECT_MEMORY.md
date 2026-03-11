@@ -8,7 +8,7 @@ ProjectionAI is an MLB betting projection system centered on batter prop predict
 
 - `hr`: home run
 - `hit`: at least one hit
-- `so`: at least one strikeout
+- `so`: starting pitcher strikeout threshold probability (`3+`, `4+`, `5+`, `6+`)
 
 The active stack is Python + PostgreSQL + Flask, with model artifacts stored on disk under `models/artifacts/`.
 
@@ -31,8 +31,16 @@ This is the most important data pipeline in the repo right now.
   - batter xStats
   - recent 14-day rates
   - opponent pitching 30-day rolling stats
+  - hitter vs pitcher pitch-type matchup features
+  - prior batter-vs-pitcher history
   - park/travel features
   - placeholder weather defaults
+
+Important newer behavior:
+
+- the PBP batter spine now cleans action-text suffixes out of batter names
+- `Unknown` placeholder batters are excluded from the hitter training spine
+- batter-team assignment prefers opposing pitcher team context over raw `inning_half`
 
 Inference helpers also live here:
 
@@ -66,12 +74,17 @@ The newer pipeline depends on canonical player-name mapping to join across incon
 
 Primary file: [models/train_models_v4.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/models/train_models_v4.py)
 
-This appears to be the current training path.
+This is the current hitter-model training path.
 
 - Reads `data/complete_dataset.csv`
-- Trains separate models for `hr`, `hit`, and `so`
+- Trains separate models for `hr`, `hit`, and legacy hitter-side `so`
 - Uses XGBoost + LightGBM + logistic-regression meta learner
 - Saves artifacts to `models/artifacts/`
+
+Important note:
+
+- the product `SO` path in the dashboard is no longer driven by this hitter-side `label_so` target
+- the hitter-side `so` target is effectively legacy and now close to degenerate after dataset cleanup
 
 Artifact pattern:
 
@@ -91,21 +104,25 @@ This is the main application entry point.
 - loads ensemble artifacts for all three targets
 - opens a PostgreSQL connection on startup
 - loads `data/complete_dataset.csv` on startup
+- loads `data/pitcher_strikeout_dataset.csv` for starter strikeout serving
 - computes signal thresholds from model output percentiles
 - exposes the live prediction/dashboard path through templates in `dashboards/templates/`
+
+Important serving behavior:
+
+- hitter rows are deduped before display/export
+- dashboard results summary now separates hit rate from odds-aware ROI
+- if odds are unavailable, the summary shows ROI as `N/A` instead of implying a betting return
 
 ### 6. Batch prediction
 
 Primary file: [scripts/generate_daily_predictions.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/scripts/generate_daily_predictions.py)
 
-This script:
+This script now matches the app direction more closely:
 
-- loads today’s picks from `hellraiser_picks`
-- enriches them through `DatasetBuilder.build_for_prediction()`
-- scores HR probabilities
-- writes JSON output to `output/`
-
-Note: this script currently appears HR-only even though the app loads HR/HIT/SO ensembles.
+- supports HR, Hit, and SO exports
+- supports strikeout-threshold selection
+- writes per-date JSON output to `output/`
 
 ## Likely Primary Workflow
 
@@ -159,9 +176,11 @@ The repo currently contains hardcoded default DB connection values in active fil
 
 - The repository contains many planning / summary markdown files at the root.
 - Some of those docs describe older files such as `matchup_model_v3.py` as the main path.
-- The codebase now appears to have shifted toward:
+- The codebase has shifted toward:
   - `data/build_training_dataset.py`
+  - `data/build_pitcher_strikeout_dataset.py`
   - `models/train_models_v4.py`
+  - `models/train_pitcher_strikeout_models.py`
   - `dashboards/app.py`
 
 When docs and code disagree, trust the code first.
@@ -184,7 +203,8 @@ When docs and code disagree, trust the code first.
 - The worktree is already dirty; do not assume a clean baseline.
 - Several top-level docs look stale relative to current code.
 - Weather features are still placeholder defaults in the newer dataset builder.
-- Batch prediction coverage for HIT/SO may lag behind the newer multi-target model setup.
+- The dashboard runtime on a no-DB path can still differ from the live DB-backed app because it falls back to local CSV datasets.
+- The hitter-side `label_so` path in `train_models_v4.py` should probably be retired or explicitly separated from the real starter strikeout product.
 
 ## Practical Starting Points For Future Work
 
@@ -195,6 +215,7 @@ If the task is about:
 - missing player matches: start with [data/name_utils.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/name_utils.py) and [data/migrate_player_names.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/migrate_player_names.py)
 - feature coverage gaps: start with [data/feature_engineering.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/feature_engineering.py)
 - daily automation: start with [scripts/generate_daily_predictions.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/scripts/generate_daily_predictions.py)
+- name/alias review: start with [data/migrate_player_names.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/migrate_player_names.py) and the generated files under `output/`
 
 ## Minimal Command Reference
 
@@ -212,3 +233,7 @@ python dashboards/app.py
 The repo is in a transition state from older HR-only experiments toward a fuller multi-target pipeline. The clearest current backbone is:
 
 `build_training_dataset.py -> train_models_v4.py -> dashboards/app.py`
+
+For starter strikeouts, the parallel backbone is:
+
+`build_pitcher_strikeout_dataset.py -> train_pitcher_strikeout_models.py -> dashboards/app.py`

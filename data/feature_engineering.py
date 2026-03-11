@@ -11,6 +11,22 @@ import requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+TEAM_CODE_ALIASES = {
+    'ATH': 'OAK',
+    'AZ': 'ARI',
+    'CHW': 'CWS',
+    'CWS': 'CWS',
+    'KCR': 'KC',
+    'SD': 'SDP',
+    'SDP': 'SDP',
+    'SF': 'SFG',
+    'SFG': 'SFG',
+    'TB': 'TB',
+    'TBR': 'TB',
+    'WSH': 'WSN',
+    'WSN': 'WSN',
+}
+
 PARK_FACTORS = {
     'COL': 1.35, 'NYY': 1.20, 'BOS': 1.15, 'CIN': 1.15, 'PHI': 1.10,
     'HOU': 1.10, 'BAL': 1.05, 'TEX': 1.05, 'ARI': 1.05, 'ATL': 1.00,
@@ -115,6 +131,13 @@ def add_park_factors(df: pd.DataFrame, engine=None, team_col: str = 'away_team')
     return df
 
 
+def _normalize_team_code(team_code: str) -> str:
+    if not team_code:
+        return team_code
+    normalized = str(team_code).strip().upper()
+    return TEAM_CODE_ALIASES.get(normalized, normalized)
+
+
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculate distance in miles between two coordinates"""
     R = 3959  # Earth radius in miles
@@ -147,72 +170,107 @@ def add_travel_fatigue(df: pd.DataFrame, conn=None) -> pd.DataFrame:
         logger.warning("Cannot add travel fatigue: missing team or game_date column")
         return df
 
-    travel_distances = []
-    timezone_changes = []
-
     if conn is None:
         conn = _connect_db()
 
+    if conn is None:
+        logger.warning("Cannot add travel fatigue: no database connection")
+        df['travel_distance_miles'] = 0.0
+        df['timezone_changes'] = 0
+        df['travel_fatigue_score'] = 0.0
+        return df
+
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+        working = df.copy()
+        working['game_date'] = pd.to_datetime(working['game_date'], errors='coerce').dt.date
+        working['team_norm'] = working['team'].apply(_normalize_team_code)
 
-        for idx, row in df.iterrows():
-            team = row.get('team')
-            game_date = row.get('game_date')
+        unique_team_dates = (
+            working[['team_norm', 'game_date']]
+            .dropna()
+            .drop_duplicates()
+        )
 
-            if not team or not game_date:
-                travel_distances.append(0)
-                timezone_changes.append(0)
-                continue
+        if unique_team_dates.empty:
+            working['travel_distance_miles'] = 0.0
+            working['timezone_changes'] = 0
+            working['travel_fatigue_score'] = 0.0
+            return working.drop(columns=['team_norm'])
 
-            # Get previous game location
-            query = """
-            SELECT home_team, away_team FROM games
-            WHERE game_date < %s AND (home_team = %s OR away_team = %s)
-            ORDER BY game_date DESC LIMIT 1
-            """
+        teams = unique_team_dates['team_norm'].dropna().unique().tolist()
+        max_game_date = unique_team_dates['game_date'].max()
 
-            cursor.execute(query, (game_date, team, team))
-            prev_game = cursor.fetchone()
+        cursor.execute("""
+            SELECT game_date, home_team, away_team
+            FROM games
+            WHERE game_date <= %s
+              AND (home_team = ANY(%s) OR away_team = ANY(%s))
+            ORDER BY game_date, game_id
+        """, (max_game_date, teams, teams))
+        games = pd.DataFrame(cursor.fetchall())
 
-            if prev_game:
-                prev_location = prev_game['home_team'] if prev_game['away_team'] == team else prev_game['away_team']
-            else:
-                prev_location = team
+        if games.empty:
+            working['travel_distance_miles'] = 0.0
+            working['timezone_changes'] = 0
+            working['travel_fatigue_score'] = 0.0
+            return working.drop(columns=['team_norm'])
 
-            # Calculate distance and timezone change
-            curr_loc = STADIUM_LOCATIONS.get(team, {})
-            prev_loc = STADIUM_LOCATIONS.get(prev_location, {})
+        games['game_date'] = pd.to_datetime(games['game_date'], errors='coerce').dt.date
+        home_games = games[['game_date', 'home_team']].rename(columns={'home_team': 'team_norm'})
+        home_games['location_team'] = home_games['team_norm']
+        away_games = games[['game_date', 'away_team', 'home_team']].rename(columns={'away_team': 'team_norm', 'home_team': 'location_team'})
+        appearances = pd.concat([
+            home_games[['team_norm', 'game_date', 'location_team']],
+            away_games[['team_norm', 'game_date', 'location_team']],
+        ], ignore_index=True)
 
-            distance = 0
-            tz_change = 0
+        appearances['team_norm'] = appearances['team_norm'].apply(_normalize_team_code)
+        appearances['location_team'] = appearances['location_team'].apply(_normalize_team_code)
+        appearances = appearances.sort_values(['team_norm', 'game_date', 'location_team'])
+        appearances['prev_location_team'] = appearances.groupby('team_norm')['location_team'].shift(1)
+        appearances['prev_location_team'] = appearances['prev_location_team'].fillna(appearances['team_norm'])
 
-            if curr_loc and prev_loc:
-                distance = haversine_distance(
-                    prev_loc['lat'], prev_loc['lon'],
-                    curr_loc['lat'], curr_loc['lon']
-                )
-                tz_change = abs(get_timezone_offset(curr_loc['tz']) - get_timezone_offset(prev_loc['tz']))
+        travel_lookup = (
+            appearances[['team_norm', 'game_date', 'location_team', 'prev_location_team']]
+            .drop_duplicates(subset=['team_norm', 'game_date'], keep='last')
+        )
 
-            travel_distances.append(distance)
-            timezone_changes.append(tz_change)
+        def compute_travel(row):
+            curr_loc = STADIUM_LOCATIONS.get(row['location_team'], {})
+            prev_loc = STADIUM_LOCATIONS.get(row['prev_location_team'], {})
+            if not curr_loc or not prev_loc:
+                return pd.Series({'travel_distance_miles': 0.0, 'timezone_changes': 0})
+            distance = haversine_distance(
+                prev_loc['lat'], prev_loc['lon'],
+                curr_loc['lat'], curr_loc['lon']
+            )
+            tz_change = abs(get_timezone_offset(curr_loc['tz']) - get_timezone_offset(prev_loc['tz']))
+            return pd.Series({'travel_distance_miles': distance, 'timezone_changes': tz_change})
+
+        travel_metrics = travel_lookup.apply(compute_travel, axis=1)
+        travel_lookup = pd.concat([travel_lookup, travel_metrics], axis=1)
+        working = working.merge(
+            travel_lookup[['team_norm', 'game_date', 'travel_distance_miles', 'timezone_changes']],
+            on=['team_norm', 'game_date'],
+            how='left'
+        )
+        working['travel_distance_miles'] = working['travel_distance_miles'].fillna(0.0)
+        working['timezone_changes'] = working['timezone_changes'].fillna(0).astype(int)
 
     except Exception as e:
         logger.warning(f"Error calculating travel fatigue: {e}")
-        travel_distances = [0] * len(df)
-        timezone_changes = [0] * len(df)
+        working = df.copy()
+        working['travel_distance_miles'] = 0.0
+        working['timezone_changes'] = 0
 
-    df['travel_distance_miles'] = travel_distances
-    df['timezone_changes'] = timezone_changes
-
-    # Calculate composite fatigue score (0-100)
-    df['travel_fatigue_score'] = (
-        (df['travel_distance_miles'] / 3000 * 25) +  # Distance component
-        (df['timezone_changes'] * 10)  # Timezone component
+    working['travel_fatigue_score'] = (
+        (working['travel_distance_miles'] / 3000 * 25) +
+        (working['timezone_changes'] * 10)
     ).clip(0, 100)
 
     logger.info("Added travel fatigue features")
-    return df
+    return working.drop(columns=['team_norm'], errors='ignore')
 
 
 def add_pitcher_rolling_stats(df: pd.DataFrame, conn=None) -> pd.DataFrame:

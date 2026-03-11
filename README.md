@@ -25,6 +25,7 @@ The dashboard supports:
 - `SO` predictions with a slider for `3+`, `4+`, `5+`, and `6+` strikeouts
 - per-day team filtering
 - optional opponent inclusion for matchup review
+- cleaned results summaries that separate hit rate from odds-aware ROI
 
 ## Main Files
 
@@ -64,6 +65,11 @@ ProjectionAI/
 - built from hitter-game rows in `data/complete_dataset.csv`
 - trained with XGBoost + LightGBM + logistic meta model
 - evaluated with temporal holdout instead of random final split
+- includes:
+  - cleaned play-by-play batter spine with `Unknown`/action-text rows removed
+  - hitter pitch-type matchup features
+  - prior batter-vs-pitcher history with leakage-safe cumulative features
+  - faster team/date-based travel fatigue enrichment
 
 ### Starter Strikeouts
 
@@ -76,6 +82,7 @@ ProjectionAI/
   - starter pitch-mix / arsenal features
   - opponent team performance versus the starter's pitch types
   - recent workload / leash features such as pitch counts and batters faced
+  - prior team-vs-starter matchup history
 
 ## Name Resolution / Data Integration
 
@@ -87,6 +94,7 @@ Current protections:
 - audit and review workflow in `data/migrate_player_names.py`
 - grouped pending-review exports under `output/`
 - team-aware validation and official roster / transaction history support
+- bulk alias review workflow for repeated play-by-play variants
 
 Important docs:
 
@@ -185,7 +193,8 @@ Important starter strikeout artifact prefixes:
 
 See [docs/IMPLEMENTATION_BACKLOG.md](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/docs/IMPLEMENTATION_BACKLOG.md), but the current highest-value open items are:
 
-- prior team-vs-starter / batter-vs-pitcher matchup features with leakage controls
 - weather / park / environment improvements
+- threshold-specific feature gating and calibration work
+- sportsbook-optional odds ingestion for future Hit and SO seasons
 - calibration and betting-oriented backtesting
 - reviewed team-mismatch badges in the dashboard

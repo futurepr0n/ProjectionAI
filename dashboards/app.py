@@ -432,6 +432,11 @@ class PredictionEngine:
 
             # Convert to DataFrame
             df = pd.DataFrame([dict(r) for r in results])
+            before = len(df)
+            df = df.drop_duplicates(subset=['game_id', 'player_name', 'team']).copy()
+            removed = before - len(df)
+            if removed > 0:
+                logger.info("Deduped %s hitter rows for %s", removed, target_date)
             logger.info(f"✅ Loaded {len(df)} players from DB for {target_date}")
             return df
 
@@ -869,6 +874,19 @@ class PredictionEngine:
                 f'actual_{target}_count': actual_count,
             }
             predictions.append(prediction)
+
+        deduped_predictions = {}
+        for pred in predictions:
+            dedupe_key = (
+                pred.get('player_name'),
+                pred.get('team'),
+                pred.get('opponent'),
+            )
+            existing = deduped_predictions.get(dedupe_key)
+            if existing is None or pred.get('probability', 0) > existing.get('probability', 0):
+                deduped_predictions[dedupe_key] = pred
+
+        predictions = list(deduped_predictions.values())
 
         predictions.sort(key=lambda x: x['probability'], reverse=True)
 
