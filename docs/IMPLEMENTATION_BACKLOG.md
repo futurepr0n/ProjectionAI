@@ -95,10 +95,18 @@ Purpose: track high-value improvements and check them off as they are implemente
 ## Product / Serving
 
 - [x] Confirm the Flask app boots cleanly and serves locally.
-- [ ] Add player-game deduplication safeguards in hitter prediction serving so the dashboard/export does not show duplicate rows for the same player slate entry.
 - [x] Add player-game deduplication safeguards in hitter prediction serving so the dashboard/export does not show duplicate rows for the same player slate entry.
 - [x] Add a per-day team selector in the dashboard so predictions can be narrowed to one club quickly.
 - [x] Add an "include opponent" dashboard filter so one team selection can also show the day’s opposing-side matchup context.
+- [x] Remove the misleading in-app training button and treat training as a terminal/developer workflow.
+- [x] Make date, target, classification, team, and opponent filters auto-refresh predictions without a separate load button.
+- [x] Make the historical stat cards reflect the currently selected classification scope instead of a hidden ranked subset.
+- [x] Add clickable prediction-card modals that show prediction breakdowns and result breakdowns in one place.
+- [x] Add row-level XGBoost driver summaries to the prediction modal for individual-card model explanations.
+- [ ] Improve model explanations beyond current XGBoost-driver summaries:
+  - support the full serving path if stacking is restored
+  - expose clearer matchup-level vs player-level factors
+  - add more robust contribution summaries for non-XGBoost components
 - [x] Expand batch prediction in [scripts/generate_daily_predictions.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/scripts/generate_daily_predictions.py) so it matches the app and scores all three supported probabilities:
   - hitter hit probability
   - hitter home run probability

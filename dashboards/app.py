@@ -43,6 +43,13 @@ def _safe_float(value, default=0.0):
     except Exception:
         return default
 
+
+def _sigmoid(value):
+    try:
+        return 1.0 / (1.0 + math.exp(-float(value)))
+    except Exception:
+        return 0.5
+
 app = Flask(__name__)
 
 # Signal thresholds per target type
@@ -618,22 +625,7 @@ class PredictionEngine:
             }
 
         try:
-            # Prepare feature dataframe
-            X = pd.DataFrame([features])
-
-            # Ensure all features exist and impute missing values
-            for feat in model_data['features']:
-                if feat not in X.columns:
-                    X[feat] = model_data['train_medians'].get(feat, 0)
-                elif X[feat].isna().any():
-                    X[feat] = X[feat].fillna(model_data['train_medians'].get(feat, 0))
-
-            X = X[model_data['features']]
-
-            # Coerce all columns to numeric (DB may return strings for some fields)
-            for col in X.columns:
-                X[col] = pd.to_numeric(X[col], errors='coerce')
-            X = X.fillna(model_data['train_medians'])
+            X = self._prepare_feature_frame(features, model_data)
 
             # Generate base predictions
             xgb_proba = model_data['xgb'].predict_proba(X)[:, 1]
@@ -685,6 +677,130 @@ class PredictionEngine:
                 'edge': 0.0,
                 'edge_pct': 0.0
             }
+
+    def _prepare_feature_frame(self, features: Dict, model_data: Dict) -> pd.DataFrame:
+        X = pd.DataFrame([features])
+
+        for feat in model_data['features']:
+            if feat not in X.columns:
+                X[feat] = model_data['train_medians'].get(feat, 0)
+            elif X[feat].isna().any():
+                X[feat] = X[feat].fillna(model_data['train_medians'].get(feat, 0))
+
+        X = X[model_data['features']]
+
+        for col in X.columns:
+            X[col] = pd.to_numeric(X[col], errors='coerce')
+        X = X.fillna(model_data['train_medians'])
+        return X
+
+    def _feature_display_label(self, name: str) -> str:
+        overrides = {
+            'xwoba': 'xwOBA',
+            'avg_ev': 'Average EV',
+            'barrel_rate': 'Barrel rate',
+            'xba': 'xBA',
+            'xslg': 'xSLG',
+            'ops': 'OPS',
+            'iso': 'ISO',
+            'k_percent': 'K%',
+            'bb_percent': 'BB%',
+            'starter_k_per_9_30d': 'Starter K/9 (30d)',
+            'starter_avg_so_30d': 'Starter avg K (30d)',
+            'starter_k_percent_season': 'Starter K% season',
+            'starter_whiff_percent_season': 'Starter whiff% season',
+            'opp_team_k_rate_14d': 'Opponent K rate (14d)',
+            'starter_avg_ip_30d': 'Starter avg IP (30d)',
+            'starter_prior_k_per_9_vs_opp': 'Prior K/9 vs opp',
+            'prior_hit_rate_vs_pitcher': 'BvP hit rate',
+            'prior_hr_rate_vs_pitcher': 'BvP HR rate',
+            'prior_games_vs_pitcher': 'BvP games',
+            'pitcher_hr_per_9_30d': 'Pitcher HR/9 (30d)',
+            'pitcher_era_30d': 'Pitcher ERA (30d)',
+            'recent_hr_rate_14d': 'Recent HR rate (14d)',
+            'recent_hit_rate_14d': 'Recent hit rate (14d)',
+            'park_factor': 'Park factor',
+            'travel_fatigue_score': 'Travel fatigue',
+            'wind_out_factor': 'Wind out factor',
+            'temp_f': 'Temperature',
+        }
+        if name in overrides:
+            return overrides[name]
+        words = name.replace('_', ' ').split()
+        return ' '.join(word.upper() if len(word) <= 3 else word.capitalize() for word in words)
+
+    def _feature_display_value(self, name: str, value) -> str:
+        value = _safe_float(value, None)
+        if value is None:
+            return '—'
+
+        if any(token in name for token in ['rate', 'percent']) and abs(value) <= 1.0:
+            return f"{value * 100:.1f}%"
+        if name.endswith('_pct') and abs(value) <= 1.0:
+            return f"{value * 100:.1f}%"
+        if name in {'xwoba', 'xba', 'xslg', 'ops', 'iso', 'park_factor'}:
+            return f"{value:.3f}" if value < 10 else f"{value:.1f}"
+        if name in {'avg_ev'}:
+            return f"{value:.1f} mph"
+        if name in {'temp_f'}:
+            return f"{value:.0f} F"
+        if abs(value) >= 100 or value.is_integer():
+            return f"{value:.0f}"
+        return f"{value:.2f}"
+
+    def get_model_feature_explanation(self, features: Dict, target: str = 'hr', model_data_override=None, top_n: int = 3) -> Dict:
+        target = target.lower() if target else 'hr'
+        model_data = model_data_override or self.models.get(target)
+        if model_data is None or model_data.get('xgb') is None:
+            return {'available': False, 'summary': 'Model contribution details unavailable.'}
+
+        try:
+            X = self._prepare_feature_frame(features, model_data)
+            dmatrix = xgb.DMatrix(X, feature_names=list(X.columns))
+            contribs = model_data['xgb'].get_booster().predict(dmatrix, pred_contribs=True)[0]
+            feature_names = list(X.columns)
+            base_margin = float(contribs[-1])
+            base_probability = _sigmoid(base_margin)
+
+            rows = []
+            for idx, feature_name in enumerate(feature_names):
+                impact = float(contribs[idx])
+                if abs(impact) < 1e-6:
+                    continue
+                rows.append({
+                    'feature': feature_name,
+                    'label': self._feature_display_label(feature_name),
+                    'raw_value': self._feature_display_value(feature_name, X.iloc[0, idx]),
+                    'impact': impact,
+                    'direction': 'positive' if impact > 0 else 'negative',
+                })
+
+            top_positive = sorted([r for r in rows if r['impact'] > 0], key=lambda r: r['impact'], reverse=True)[:top_n]
+            top_negative = sorted([r for r in rows if r['impact'] < 0], key=lambda r: r['impact'])[:top_n]
+
+            for row in top_positive + top_negative:
+                before = _sigmoid(base_margin)
+                after = _sigmoid(base_margin + row['impact'])
+                row['probability_delta_pct'] = round((after - before) * 100, 1)
+
+            strongest = sorted(rows, key=lambda r: abs(r['impact']), reverse=True)[:2]
+            if strongest:
+                summary = 'Primary model drivers: ' + ', '.join(
+                    f"{item['label']} ({'up' if item['impact'] > 0 else 'down'})" for item in strongest
+                ) + '.'
+            else:
+                summary = 'Model contribution details were minimal for this row.'
+
+            return {
+                'available': True,
+                'summary': summary,
+                'base_probability_pct': round(base_probability * 100, 1),
+                'top_positive': top_positive,
+                'top_negative': top_negative,
+            }
+        except Exception as exc:
+            logger.warning("Could not compute model feature explanation for %s: %s", target, exc)
+            return {'available': False, 'summary': 'Model contribution details unavailable.'}
 
     def compute_composite_score(self, row: dict, all_rows: list) -> float:
         """
@@ -755,7 +871,7 @@ class PredictionEngine:
             return [_safe_float(r.get(key, default), default) for r in all_rows]
 
         xwoba = _safe_float(row.get('xwoba'), 0.320)
-        barrel_rate = _safe_float(row.get('barrel_rate'), 0.06)
+        barrel_rate = _safe_float(row.get('barrel_rate'), 6.0)
         avg_ev = _safe_float(row.get('avg_ev'), 88.0)
         p_hr9 = _safe_float(row.get('pitcher_hr_per_9_30d'), 1.2)
         p_era = _safe_float(row.get('pitcher_era_30d'), 4.0)
@@ -768,7 +884,7 @@ class PredictionEngine:
 
         power = (
             normalize(xwoba, pool('xwoba', 0.320)) * 0.45 +
-            normalize(barrel_rate, pool('barrel_rate', 0.06)) * 0.35 +
+            normalize(barrel_rate, pool('barrel_rate', 6.0)) * 0.35 +
             normalize(avg_ev, pool('avg_ev', 88.0)) * 0.20
         )
         matchup = (
@@ -793,6 +909,7 @@ class PredictionEngine:
             {'label': 'Freshness', 'score': round(freshness * 100, 1), 'weight': 0.10},
         ]
         components = sorted(components, key=lambda item: item['score'], reverse=True)
+        model_drivers = self.get_model_feature_explanation(row, target=target)
 
         return {
             'prediction': {
@@ -801,9 +918,10 @@ class PredictionEngine:
                 'probability_pct': round(_safe_float(prediction.get('probability')) * 100, 1),
                 'summary': f"{prediction.get('signal_label', 'Rating')} driven by {components[0]['label'].lower()} and {components[1]['label'].lower()}.",
                 'components': components,
+                'model_drivers': model_drivers,
                 'details': [
                     {'label': 'xwOBA', 'value': round(xwoba, 3)},
-                    {'label': 'Barrel rate', 'value': round(barrel_rate * 100, 1), 'suffix': '%'},
+                    {'label': 'Barrel rate', 'value': round(barrel_rate, 1), 'suffix': '%'},
                     {'label': 'Avg EV', 'value': round(avg_ev, 1), 'suffix': ' mph'},
                     {'label': 'Pitcher HR/9 (30d)', 'value': round(p_hr9, 2)},
                     {'label': 'Pitcher ERA (30d)', 'value': round(p_era, 2)},
@@ -892,6 +1010,11 @@ class PredictionEngine:
             {'label': 'Workload', 'score': round(normalize(avg_ip, pool('starter_avg_ip_30d', 5.0)) * 100, 1), 'weight': 0.08},
         ]
         components = sorted(components, key=lambda item: item['score'], reverse=True)
+        model_drivers = self.get_model_feature_explanation(
+            row,
+            target='so',
+            model_data_override=self._model_data_for_target('so', so_threshold=so_threshold)
+        )
 
         return {
             'prediction': {
@@ -900,6 +1023,7 @@ class PredictionEngine:
                 'probability_pct': round(_safe_float(prediction.get('probability')) * 100, 1),
                 'summary': f"{prediction.get('signal_label', 'Rating')} driven by {components[0]['label'].lower()} and {components[1]['label'].lower()}.",
                 'components': components,
+                'model_drivers': model_drivers,
                 'details': [
                     {'label': 'Target', 'value': f'{so_threshold}+ K'},
                     {'label': 'Starter K/9 (30d)', 'value': round(k9, 2)},

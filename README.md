@@ -26,6 +26,9 @@ The dashboard supports:
 - per-day team filtering
 - optional opponent inclusion for matchup review
 - cleaned results summaries that separate hit rate from odds-aware ROI
+- clickable card modals with per-prediction breakdowns
+- row-level XGBoost driver summaries for individual cards
+- result breakdowns inside the same modal when outcomes are available
 
 ## Main Files
 
@@ -157,6 +160,17 @@ python models/train_pitcher_strikeout_models.py
 
 Training is intended to be run from the terminal by a developer or agent. The dashboard serves saved artifacts and should not be treated as the training surface.
 
+### Dashboard behavior notes
+
+- prediction controls auto-refresh; there is no manual `Load Predictions` step
+- model training is not triggered from the UI; retraining is a terminal workflow
+- the historical stat cards reflect the currently selected classification scope
+- clicking a prediction card opens an individual modal with:
+  - summary and classification context
+  - underlying feature breakdown
+  - model-driver breakdown for that exact row
+  - result breakdown when available
+
 ### Generate batch predictions
 
 All targets:
@@ -200,3 +214,4 @@ See [docs/IMPLEMENTATION_BACKLOG.md](/Users/futurepr0n/Development/Capping.Pro/G
 - sportsbook-optional odds ingestion for future Hit and SO seasons
 - calibration and betting-oriented backtesting
 - reviewed team-mismatch badges in the dashboard
+- deeper model-explanation quality beyond current XGBoost driver summaries

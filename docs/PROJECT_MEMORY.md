@@ -113,6 +113,15 @@ Important serving behavior:
 - hitter rows are deduped before display/export
 - dashboard results summary now separates hit rate from odds-aware ROI
 - if odds are unavailable, the summary shows ROI as `N/A` instead of implying a betting return
+- filter changes auto-refresh predictions; there is no longer a separate load button
+- the historical stat cards are classification-aware
+- clicking a prediction card opens a modal with:
+  - a per-row prediction summary
+  - explanation components
+  - row-level XGBoost driver summaries
+  - result breakdown when the outcome exists
+- some explanation components are intentionally matchup-level and can repeat across players in the same game
+- explanation formatting has been corrected for percentage-point fields such as `barrel_rate`
 
 ### 6. Batch prediction
 
@@ -212,6 +221,7 @@ If the task is about:
 
 - model quality: start with [models/train_models_v4.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/models/train_models_v4.py) and [data/build_training_dataset.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/build_training_dataset.py)
 - live prediction bugs: start with [dashboards/app.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/dashboards/app.py)
+- prediction explanation / modal issues: start with [dashboards/app.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/dashboards/app.py) and [dashboard.html](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/dashboards/templates/dashboard.html)
 - missing player matches: start with [data/name_utils.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/name_utils.py) and [data/migrate_player_names.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/migrate_player_names.py)
 - feature coverage gaps: start with [data/feature_engineering.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/feature_engineering.py)
 - daily automation: start with [scripts/generate_daily_predictions.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/scripts/generate_daily_predictions.py)
