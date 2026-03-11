@@ -34,6 +34,15 @@ def _sanitize_for_json(obj):
         return [_sanitize_for_json(v) for v in obj]
     return obj
 
+
+def _safe_float(value, default=0.0):
+    try:
+        if value is None or (isinstance(value, float) and math.isnan(value)):
+            return default
+        return float(value)
+    except Exception:
+        return default
+
 app = Flask(__name__)
 
 # Signal thresholds per target type
@@ -734,6 +743,91 @@ class PredictionEngine:
         raw = (power * 0.30 + matchup * 0.25 + form * 0.20 + env * 0.15 + freshness * 0.10)
         return round(raw * 100, 1)
 
+    def build_hitter_explanation(self, row: dict, all_rows: list, prediction: dict, target: str, actual_count: int, did_occur: bool) -> Dict:
+        def normalize(val, vals, invert=False):
+            lo, hi = min(vals), max(vals)
+            if hi == lo:
+                return 0.5
+            n = (val - lo) / (hi - lo)
+            return 1.0 - n if invert else n
+
+        def pool(key, default):
+            return [_safe_float(r.get(key, default), default) for r in all_rows]
+
+        xwoba = _safe_float(row.get('xwoba'), 0.320)
+        barrel_rate = _safe_float(row.get('barrel_rate'), 0.06)
+        avg_ev = _safe_float(row.get('avg_ev'), 88.0)
+        p_hr9 = _safe_float(row.get('pitcher_hr_per_9_30d'), 1.2)
+        p_era = _safe_float(row.get('pitcher_era_30d'), 4.0)
+        recent_hr = _safe_float(row.get('recent_hr_rate_14d'), 0.03)
+        recent_hit = _safe_float(row.get('recent_hit_rate_14d'), 0.25)
+        park_factor = _safe_float(row.get('park_factor'), 1.0)
+        wind_out = _safe_float(row.get('wind_out_factor'), 1.0)
+        temp_f = _safe_float(row.get('temp_f'), 72.0)
+        fatigue = _safe_float(row.get('travel_fatigue_score'), 0.0)
+
+        power = (
+            normalize(xwoba, pool('xwoba', 0.320)) * 0.45 +
+            normalize(barrel_rate, pool('barrel_rate', 0.06)) * 0.35 +
+            normalize(avg_ev, pool('avg_ev', 88.0)) * 0.20
+        )
+        matchup = (
+            normalize(p_hr9, pool('pitcher_hr_per_9_30d', 1.2)) * 0.6 +
+            normalize(p_era, pool('pitcher_era_30d', 4.0)) * 0.4
+        )
+        form_key = 'recent_hr_rate_14d' if target == 'hr' else 'recent_hit_rate_14d'
+        form_val = recent_hr if target == 'hr' else recent_hit
+        form = normalize(form_val, pool(form_key, 0.03 if target == 'hr' else 0.25))
+        env = (
+            normalize(park_factor, pool('park_factor', 1.0)) * 0.5 +
+            normalize(wind_out, pool('wind_out_factor', 1.0)) * 0.3 +
+            normalize(max(temp_f, 40.0), [max(_safe_float(r.get('temp_f'), 72.0), 40.0) for r in all_rows]) * 0.2
+        )
+        freshness = normalize(fatigue, pool('travel_fatigue_score', 0.0), invert=True)
+
+        components = [
+            {'label': 'Power quality', 'score': round(power * 100, 1), 'weight': 0.30},
+            {'label': 'Pitcher matchup', 'score': round(matchup * 100, 1), 'weight': 0.25},
+            {'label': 'Recent form', 'score': round(form * 100, 1), 'weight': 0.20},
+            {'label': 'Park and environment', 'score': round(env * 100, 1), 'weight': 0.15},
+            {'label': 'Freshness', 'score': round(freshness * 100, 1), 'weight': 0.10},
+        ]
+        components = sorted(components, key=lambda item: item['score'], reverse=True)
+
+        return {
+            'prediction': {
+                'signal': prediction.get('signal_label'),
+                'score': prediction.get('score'),
+                'probability_pct': round(_safe_float(prediction.get('probability')) * 100, 1),
+                'summary': f"{prediction.get('signal_label', 'Rating')} driven by {components[0]['label'].lower()} and {components[1]['label'].lower()}.",
+                'components': components,
+                'details': [
+                    {'label': 'xwOBA', 'value': round(xwoba, 3)},
+                    {'label': 'Barrel rate', 'value': round(barrel_rate * 100, 1), 'suffix': '%'},
+                    {'label': 'Avg EV', 'value': round(avg_ev, 1), 'suffix': ' mph'},
+                    {'label': 'Pitcher HR/9 (30d)', 'value': round(p_hr9, 2)},
+                    {'label': 'Pitcher ERA (30d)', 'value': round(p_era, 2)},
+                    {'label': 'Recent HR rate (14d)', 'value': round(recent_hr * 100, 1), 'suffix': '%'},
+                    {'label': 'Recent Hit rate (14d)', 'value': round(recent_hit * 100, 1), 'suffix': '%'},
+                    {'label': 'Park factor', 'value': round(park_factor, 2)},
+                    {'label': 'Travel fatigue', 'value': round(fatigue, 1)},
+                    {'label': 'BvP games', 'value': int(_safe_float(row.get('prior_games_vs_pitcher'), 0))},
+                    {'label': 'BvP hit rate', 'value': round(_safe_float(row.get('prior_hit_rate_vs_pitcher'), 0) * 100, 1), 'suffix': '%'},
+                    {'label': 'BvP HR rate', 'value': round(_safe_float(row.get('prior_hr_rate_vs_pitcher'), 0) * 100, 1), 'suffix': '%'},
+                ],
+            },
+            'results': {
+                'available': True,
+                'did_occur': bool(did_occur),
+                'actual_count': int(actual_count),
+                'summary': (
+                    f"Outcome matched the prediction with {actual_count} recorded {target.upper()} event(s)."
+                    if did_occur else
+                    f"Outcome missed. Recorded {actual_count} {target.upper()} event(s)."
+                ),
+            }
+        }
+
     def compute_pitcher_strikeout_score(self, row: dict, all_rows: list) -> float:
         """Starter strikeout score (0-100), separate from model probability."""
         def safe_float(v, default=0.0):
@@ -770,6 +864,65 @@ class PredictionEngine:
             normalize(avg_ip, pool('starter_avg_ip_30d', 5.0)) * 0.04
         )
         return round(components * 100, 1)
+
+    def build_pitcher_explanation(self, row: dict, all_rows: list, prediction: dict, actual_count: int, did_occur: bool, so_threshold: int) -> Dict:
+        def normalize(val, vals):
+            vals = [_safe_float(v) for v in vals]
+            lo, hi = min(vals), max(vals)
+            if hi == lo:
+                return 0.5
+            return (_safe_float(val) - lo) / (hi - lo)
+
+        def pool(key, default):
+            return [_safe_float(r.get(key, default), default) for r in all_rows]
+
+        k9 = _safe_float(row.get('starter_k_per_9_30d'), 8.0)
+        avg_so = _safe_float(row.get('starter_avg_so_30d'), 4.5)
+        season_k = _safe_float(row.get('starter_k_percent_season'), 22.0)
+        whiff = _safe_float(row.get('starter_whiff_percent_season'), 24.0)
+        opp_k = _safe_float(row.get('opp_team_k_rate_14d'), 0.22)
+        avg_ip = _safe_float(row.get('starter_avg_ip_30d'), 5.0)
+
+        components = [
+            {'label': 'Recent strikeout rate', 'score': round(normalize(k9, pool('starter_k_per_9_30d', 8.0)) * 100, 1), 'weight': 0.26},
+            {'label': 'Recent strikeout volume', 'score': round(normalize(avg_so, pool('starter_avg_so_30d', 4.5)) * 100, 1), 'weight': 0.24},
+            {'label': 'Season strikeout skill', 'score': round(normalize(season_k, pool('starter_k_percent_season', 22.0)) * 100, 1), 'weight': 0.16},
+            {'label': 'Swing-and-miss profile', 'score': round(normalize(whiff, pool('starter_whiff_percent_season', 24.0)) * 100, 1), 'weight': 0.14},
+            {'label': 'Opponent strikeout tendency', 'score': round(normalize(opp_k, pool('opp_team_k_rate_14d', 0.22)) * 100, 1), 'weight': 0.12},
+            {'label': 'Workload', 'score': round(normalize(avg_ip, pool('starter_avg_ip_30d', 5.0)) * 100, 1), 'weight': 0.08},
+        ]
+        components = sorted(components, key=lambda item: item['score'], reverse=True)
+
+        return {
+            'prediction': {
+                'signal': prediction.get('signal_label'),
+                'score': prediction.get('score'),
+                'probability_pct': round(_safe_float(prediction.get('probability')) * 100, 1),
+                'summary': f"{prediction.get('signal_label', 'Rating')} driven by {components[0]['label'].lower()} and {components[1]['label'].lower()}.",
+                'components': components,
+                'details': [
+                    {'label': 'Target', 'value': f'{so_threshold}+ K'},
+                    {'label': 'Starter K/9 (30d)', 'value': round(k9, 2)},
+                    {'label': 'Starter avg K (30d)', 'value': round(avg_so, 2)},
+                    {'label': 'Starter K% season', 'value': round(season_k, 1), 'suffix': '%'},
+                    {'label': 'Starter whiff% season', 'value': round(whiff, 1), 'suffix': '%'},
+                    {'label': 'Opponent K rate (14d)', 'value': round(opp_k * 100, 1), 'suffix': '%'},
+                    {'label': 'Starter avg IP (30d)', 'value': round(avg_ip, 2)},
+                    {'label': 'Prior starts vs opp', 'value': int(_safe_float(row.get('starter_prior_starts_vs_opp'), 0))},
+                    {'label': 'Prior K/9 vs opp', 'value': round(_safe_float(row.get('starter_prior_k_per_9_vs_opp'), 0), 2)},
+                ],
+            },
+            'results': {
+                'available': True,
+                'did_occur': bool(did_occur),
+                'actual_count': int(actual_count),
+                'summary': (
+                    f"Starter cleared the {so_threshold}+ K target with {actual_count} strikeouts."
+                    if did_occur else
+                    f"Starter finished below the {so_threshold}+ K target with {actual_count} strikeouts."
+                ),
+            }
+        }
 
     def generate_daily_predictions_with_results(self, target_date: date, target: str = 'hr', so_threshold: int = 3) -> Dict:
         """Generate predictions for a date with actual results from DB or CSV dataset"""
@@ -873,6 +1026,14 @@ class PredictionEngine:
                 f'actual_{target}': did_occur,
                 f'actual_{target}_count': actual_count,
             }
+            prediction['explanation'] = self.build_hitter_explanation(
+                feature_row,
+                all_rows_list,
+                prediction,
+                target,
+                actual_count,
+                did_occur
+            )
             predictions.append(prediction)
 
         deduped_predictions = {}
@@ -985,6 +1146,14 @@ class PredictionEngine:
                 'actual_so': did_occur,
                 'actual_so_count': actual_count,
             }
+            prediction['explanation'] = self.build_pitcher_explanation(
+                feature_row,
+                all_rows_list,
+                prediction,
+                actual_count,
+                did_occur,
+                so_threshold
+            )
             predictions.append(prediction)
 
         predictions.sort(key=lambda x: x['probability'], reverse=True)

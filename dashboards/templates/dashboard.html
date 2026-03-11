@@ -266,6 +266,86 @@
             font-size: 0.6rem;
             color: #aaa;
         }
+        .prediction-card {
+            cursor: pointer;
+        }
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(5, 8, 20, 0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            z-index: 1000;
+        }
+        .modal-backdrop.open {
+            display: flex;
+        }
+        .modal-panel {
+            width: min(920px, 100%);
+            max-height: 90vh;
+            overflow-y: auto;
+            background: linear-gradient(180deg, #14213d 0%, #10192c 100%);
+            border: 1px solid #35507f;
+            border-radius: 16px;
+            padding: 22px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: start;
+            margin-bottom: 18px;
+        }
+        .modal-close {
+            background: transparent;
+            border: 1px solid #44618f;
+            color: #dfe7ff;
+            border-radius: 8px;
+            padding: 8px 12px;
+            cursor: pointer;
+        }
+        .modal-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 14px;
+            margin-bottom: 18px;
+        }
+        .modal-card {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(118, 160, 255, 0.18);
+            border-radius: 12px;
+            padding: 14px;
+        }
+        .modal-card h4 {
+            font-size: 0.85rem;
+            color: #9db5ff;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 6px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+        .detail-label {
+            color: #9fb0d4;
+            font-size: 0.84rem;
+        }
+        .detail-value {
+            color: #f1f5ff;
+            font-weight: 600;
+            font-size: 0.84rem;
+            text-align: right;
+        }
     </style>
 </head>
 <body>
@@ -413,12 +493,28 @@
         </div>
     </div>
 
+    <div id="prediction-modal" class="modal-backdrop" onclick="closePredictionModal(event)">
+        <div class="modal-panel" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div>
+                    <h2 id="modal-title">Prediction Details</h2>
+                    <div id="modal-subtitle" style="color: #aab8da; font-size: 0.9rem; margin-top: 6px;"></div>
+                </div>
+                <button class="modal-close" onclick="closePredictionModal()">Close</button>
+            </div>
+            <div class="modal-grid" id="modal-summary-grid"></div>
+            <div class="modal-grid" id="modal-prediction-grid"></div>
+            <div class="modal-grid" id="modal-results-grid"></div>
+        </div>
+    </div>
+
     <script>
         let availableDates = [];
         let allPredictions = [];
         let filteredPredictions = [];
         let currentTarget = 'hr';
         let availableTeams = [];
+        let currentDisplayedPredictions = [];
 
         function currentSoThreshold() {
             return parseInt(document.getElementById('so-threshold').value || '3', 10);
@@ -739,6 +835,10 @@
             }
 
             filteredPredictions = results.slice();
+            currentDisplayedPredictions = results.map((item, index) => ({
+                ...item,
+                __display_index: index,
+            }));
 
             // Show summary box
             const summaryBox = document.getElementById('summary-box');
@@ -756,8 +856,8 @@
             const filterLabel = filterParts.length > 0 ? ` (${filterParts.join(', ')})` : '';
             document.getElementById('summary-filter').textContent = filterLabel;
 
-            const totalPicks = results.length;
-            const outcomeSummary = summarizeOutcomes(results, resultKey);
+            const totalPicks = currentDisplayedPredictions.length;
+            const outcomeSummary = summarizeOutcomes(currentDisplayedPredictions, resultKey);
             const hitRate = outcomeSummary.hitRate;
             
             document.getElementById('sum-total').textContent = totalPicks;
@@ -792,8 +892,8 @@
             }
             
             // Separate by signal classification
-            const strongBuys = results.filter(r => r.signal_label === 'STRONG_BUY');
-            const buys = results.filter(r => r.signal_label === 'BUY');
+            const strongBuys = currentDisplayedPredictions.filter(r => r.signal_label === 'STRONG_BUY');
+            const buys = currentDisplayedPredictions.filter(r => r.signal_label === 'BUY');
             const highConf = [...strongBuys, ...buys];
 
             // Display Strong Buy / Buy (top tier)
@@ -808,7 +908,7 @@
             }
 
             // Display Moderate signals
-            const moderate = results.filter(r => r.signal_label === 'MODERATE');
+            const moderate = currentDisplayedPredictions.filter(r => r.signal_label === 'MODERATE');
             const buySection = document.getElementById('buys-section');
             const buyGrid = document.getElementById('buys-grid');
             buySection.querySelector('h2').textContent = '💰 Moderate Signals';
@@ -820,8 +920,8 @@
             }
             
             // Display all filtered results
-            if (results.length > 0) {
-                document.getElementById('all-grid').innerHTML = results.map(r => createCard(r)).join('');
+            if (currentDisplayedPredictions.length > 0) {
+                document.getElementById('all-grid').innerHTML = currentDisplayedPredictions.map(r => createCard(r)).join('');
             } else {
                 document.getElementById('all-grid').innerHTML = '<div class="loading">No predictions match your filters</div>';
             }
@@ -879,7 +979,7 @@
             const cardClass = r[resultKey] ? 'correct' : (r[resultKey] === false ? 'incorrect' : '');
 
             return `
-                <div class="prediction-card ${signal} ${cardClass}">
+                <div class="prediction-card ${signal} ${cardClass}" onclick="openPredictionModalByIndex(${r.__display_index})">
                     <div class="card-header">
                         <div>
                             <div class="player-name">${r.player_name || 'Unknown'}</div>
@@ -910,6 +1010,75 @@
                     </div>
                 </div>
             `;
+        }
+
+        function formatDetailValue(item) {
+            if (item == null || item.value == null || item.value === '') return '—';
+            return `${item.value}${item.suffix || ''}`;
+        }
+
+        function formatComponentValue(item) {
+            const score = item && item.score != null ? `${item.score.toFixed ? item.score.toFixed(1) : item.score}/100` : '—';
+            const weight = item && item.weight != null ? `${Math.round(item.weight * 100)}% weight` : null;
+            return weight ? `${score} • ${weight}` : score;
+        }
+
+        function renderDetailCard(title, rows) {
+            if (!rows || rows.length === 0) return '';
+            return `
+                <div class="modal-card">
+                    <h4>${title}</h4>
+                    ${rows.map(item => `
+                        <div class="detail-row">
+                            <div class="detail-label">${item.label}</div>
+                            <div class="detail-value">${item.score != null ? formatComponentValue(item) : formatDetailValue(item)}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        function openPredictionModalByIndex(index) {
+            const prediction = currentDisplayedPredictions.find(item => item.__display_index === index);
+            if (!prediction) return;
+            const explanation = prediction.explanation || {};
+            const predictionExplanation = explanation.prediction || {};
+            const resultExplanation = explanation.results || {};
+
+            document.getElementById('modal-title').textContent = prediction.player_name || 'Prediction Details';
+            document.getElementById('modal-subtitle').textContent = `${prediction.team || ''} vs ${prediction.opponent || 'TBD'} • ${prediction.signal_label || ''}`;
+
+            document.getElementById('modal-summary-grid').innerHTML = [
+                renderDetailCard('Prediction Summary', [
+                    { label: 'Signal', value: prediction.signal_label || '—' },
+                    { label: 'Score', value: prediction.score != null ? prediction.score.toFixed(1) : '—' },
+                    { label: 'Model Probability', value: prediction.probability != null ? (prediction.probability * 100).toFixed(1) : '—', suffix: '%' },
+                    { label: 'Summary', value: predictionExplanation.summary || 'No summary available' },
+                ])
+            ].join('');
+
+            document.getElementById('modal-prediction-grid').innerHTML = [
+                renderDetailCard('Why This Rated Here', predictionExplanation.components || []),
+                renderDetailCard('Prediction Breakdown', predictionExplanation.details || []),
+            ].join('');
+
+            document.getElementById('modal-results-grid').innerHTML = [
+                renderDetailCard('Results Breakdown', [
+                    { label: 'Result Available', value: resultExplanation.available ? 'Yes' : 'No' },
+                    { label: 'Outcome Matched', value: resultExplanation.did_occur ? 'Yes' : 'No' },
+                    { label: 'Actual Count', value: resultExplanation.actual_count != null ? resultExplanation.actual_count : '—' },
+                    { label: 'Summary', value: resultExplanation.summary || 'No result context available yet' },
+                ]),
+            ].join('');
+
+            document.getElementById('prediction-modal').classList.add('open');
+        }
+
+        function closePredictionModal(event) {
+            if (event && event.target && event.target !== document.getElementById('prediction-modal')) {
+                return;
+            }
+            document.getElementById('prediction-modal').classList.remove('open');
         }
         
         function showAllDates() {
