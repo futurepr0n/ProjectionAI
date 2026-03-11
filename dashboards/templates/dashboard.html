@@ -284,7 +284,7 @@
                     <div class="prop-stat-panel" id="hr-stat-panel">
                         <div class="prop-stat-label">HR</div>
                         <div class="prop-stat-item">
-                            <span id="hr-picks">—</span><small>Picks</small>
+                            <span id="hr-picks">—</span><small id="hr-picks-label">Rows</small>
                         </div>
                         <div class="prop-stat-item">
                             <span id="hr-hitrate">—</span><small>Hit Rate</small>
@@ -293,7 +293,7 @@
                     <div class="prop-stat-panel" id="hit-stat-panel">
                         <div class="prop-stat-label">Hit</div>
                         <div class="prop-stat-item">
-                            <span id="hit-picks">—</span><small>Picks</small>
+                            <span id="hit-picks">—</span><small id="hit-picks-label">Rows</small>
                         </div>
                         <div class="prop-stat-item">
                             <span id="hit-hitrate">—</span><small>Hit Rate</small>
@@ -302,12 +302,15 @@
                     <div class="prop-stat-panel" id="so-stat-panel">
                         <div class="prop-stat-label" id="so-stat-label">SO 3+</div>
                         <div class="prop-stat-item">
-                            <span id="so-picks">—</span><small>Picks</small>
+                            <span id="so-picks">—</span><small id="so-picks-label">Rows</small>
                         </div>
                         <div class="prop-stat-item">
                             <span id="so-hitrate">—</span><small>Hit Rate</small>
                         </div>
                     </div>
+                </div>
+                <div id="prop-stats-scope" style="font-size: 0.72rem; color: #9aa3c7; text-align: center; margin-top: 6px;">
+                    Historical scope: All Types
                 </div>
                 <div class="stat" id="model-status-indicator" style="padding: 12px 18px; border-radius: 10px; display: flex; align-items: center; gap: 8px;">
                     <div style="width: 10px; height: 10px; border-radius: 50%; background: #999;"></div>
@@ -485,19 +488,44 @@
         
         async function loadDynamicStats() {
             try {
+                const classification = document.getElementById('filter-classification').value || '';
                 const params = new URLSearchParams({ so_threshold: currentSoThreshold() });
+                if (classification) {
+                    params.set('classification', classification);
+                }
                 const resp = await fetch(`/api/stats/all-targets?${params.toString()}`);
                 const data = await resp.json();
+                const scopeLabel = document.getElementById('prop-stats-scope');
                 for (const target of ['hr', 'hit', 'so']) {
                     const s = data[target] || {};
                     document.getElementById(`${target}-picks`).textContent =
                         s.picks != null ? s.picks : '—';
                     document.getElementById(`${target}-hitrate`).textContent =
                         s.hit_rate != null ? s.hit_rate.toFixed(1) + '%' : '—';
+                    const picksLabel = document.getElementById(`${target}-picks-label`);
+                    if (picksLabel) {
+                        picksLabel.textContent = 'Rows';
+                        if (s.dataset_rows != null) {
+                            const scopeText = s.scope === 'classification'
+                                ? `${s.dataset_rows} historical rows in ${formatClassificationLabel(s.classification)}`
+                                : `${s.dataset_rows} historical rows included`;
+                            picksLabel.title = scopeText;
+                        }
+                    }
+                }
+                if (scopeLabel) {
+                    scopeLabel.textContent = classification
+                        ? `Historical scope: ${formatClassificationLabel(classification)}`
+                        : 'Historical scope: All Types';
                 }
             } catch (e) {
                 console.error('Error loading stats:', e);
             }
+        }
+
+        function formatClassificationLabel(value) {
+            if (!value || value === 'ALL_TYPES') return 'All Types';
+            return value.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, char => char.toUpperCase());
         }
         
         function calculateDynamicStats() {
@@ -605,6 +633,7 @@
             });
 
             calculateDynamicStats();
+            loadDynamicStats();
 
             // If a date is selected, refresh the view
             const selectedDate = document.getElementById('date-select').value;

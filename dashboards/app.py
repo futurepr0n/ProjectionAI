@@ -1329,10 +1329,9 @@ def master_list():
 
 @app.route('/api/stats/all-targets')
 def get_all_target_stats():
-    """Historical pick accuracy — counts top-25% picks per date (STRONG_BUY + BUY tier).
-    Signals are rank-based within each date's slate, so picks here mirror what the
-    predictions endpoint shows."""
+    """Historical header stats across the full dataset for each target."""
     so_threshold = engine._so_threshold(request.args.get('so_threshold'))
+    classification = (request.args.get('classification') or '').strip().upper()
     label_map = {'hr': 'label', 'hit': 'label_hit', 'so': f'label_so_{so_threshold}_plus'}
     result = {}
 
@@ -1357,27 +1356,46 @@ def get_all_target_stats():
         proba = model_data['xgb'].predict_proba(X)[:, 1]
         df = df.copy()
         df['_proba'] = proba
-        actuals = df[label_col].astype(bool).values
+        df['_actual'] = df[label_col].astype(bool)
 
-        # Rank within each date — top 25% per date = STRONG_BUY + BUY = "picks"
-        if 'game_date' in df.columns:
-            mask = np.zeros(len(df), dtype=bool)
-            for _, grp in df.groupby('game_date'):
-                idx = grp.index
-                n = len(idx)
-                sorted_idx = grp['_proba'].sort_values(ascending=False).index
-                top25 = sorted_idx[:max(1, int(n * 0.25))]
-                mask[df.index.get_indexer(top25)] = True
-        else:
-            # Fallback: global top 25%
-            cutoff = np.percentile(proba, 75)
-            mask = proba >= cutoff
+        if classification:
+            if 'game_date' in df.columns:
+                signals = pd.Series(index=df.index, dtype=object)
+                cutoffs = [
+                    (0.10, 'STRONG_BUY'),
+                    (0.25, 'BUY'),
+                    (0.50, 'MODERATE'),
+                    (0.75, 'AVOID'),
+                    (1.00, 'STRONG_SELL'),
+                ]
+                for _, grp in df.groupby('game_date'):
+                    sorted_idx = grp['_proba'].sort_values(ascending=False).index.tolist()
+                    n = len(sorted_idx)
+                    for rank, idx in enumerate(sorted_idx):
+                        rank_pct = rank / n if n else 1.0
+                        label = 'STRONG_SELL'
+                        for threshold, candidate in cutoffs:
+                            if rank_pct < threshold:
+                                label = candidate
+                                break
+                        signals.at[idx] = label
+                df['_signal_label'] = signals
+            else:
+                df['_signal_label'] = 'ALL'
 
-        picks = int(mask.sum())
-        hits = int(actuals[mask].sum()) if picks > 0 else 0
-        hit_rate = round(hits / picks * 100, 1) if picks > 0 else 0
+            df = df[df['_signal_label'] == classification].copy()
 
-        result[target] = {'picks': picks, 'hit_rate': hit_rate}
+        rows = int(len(df))
+        hits = int(df['_actual'].sum()) if rows > 0 else 0
+        hit_rate = round(hits / rows * 100, 1) if rows > 0 else 0
+
+        result[target] = {
+            'picks': rows,
+            'hit_rate': hit_rate,
+            'scope': 'classification' if classification else 'full_dataset',
+            'dataset_rows': rows,
+            'classification': classification or 'ALL_TYPES',
+        }
 
     return jsonify(result)
 
