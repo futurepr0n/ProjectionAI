@@ -93,6 +93,8 @@ MODEL_ARTIFACT_PREFIX = {
     'so': 'pitcher_so_3_plus',
 }
 
+SERVING_MANIFEST_FILENAME = 'serving_manifest.json'
+
 SO_THRESHOLD_PREFIX = {
     3: 'pitcher_so_3_plus',
     4: 'pitcher_so_4_plus',
@@ -175,6 +177,7 @@ class PredictionEngine:
         self.dataset = None
         self.pitcher_so_dataset = None
         self.training_results = {}
+        self.serving_manifest = {}
         self._canonical_name_cache = {}
         self._player_lookup_cache = None
         self._pitch_matchup_cache = None
@@ -200,31 +203,41 @@ class PredictionEngine:
         else:
             artifacts_dir = os.path.dirname(model_path)
 
+        self.serving_manifest = self._load_serving_manifest(artifacts_dir)
         self.models = {'hr': None, 'hit': None, 'so': None}
         self.so_models = {}
 
         for target in ['hr', 'hit']:
             try:
                 artifact_prefix = MODEL_ARTIFACT_PREFIX[target]
-                xgb_path = os.path.join(artifacts_dir, f'{artifact_prefix}_xgb.json')
                 lgb_path = os.path.join(artifacts_dir, f'{artifact_prefix}_lgb.txt')
                 meta_path = os.path.join(artifacts_dir, f'{artifact_prefix}_meta.pkl')
+                xgb_path = os.path.join(artifacts_dir, f'{artifact_prefix}_xgb.json')
+                serving_mode = self._manifest_serving_mode(target, artifact_prefix)
 
-                if not os.path.exists(xgb_path) or not os.path.exists(lgb_path) or not os.path.exists(meta_path):
+                required_paths = [lgb_path, meta_path]
+                if serving_mode == 'xgb_primary':
+                    required_paths.append(xgb_path)
+
+                if any(not os.path.exists(path) for path in required_paths):
                     logger.warning(f"⚠️ {target.upper()} ensemble artifacts missing at {artifacts_dir}")
                     self.models[target] = None
                     continue
 
-                xgb_model = xgb.XGBClassifier()
-                xgb_model.load_model(xgb_path)
-
+                xgb_model = None
+                if os.path.exists(xgb_path):
+                    xgb_model = xgb.XGBClassifier()
+                    xgb_model.load_model(xgb_path)
                 lgb_model = lgb.Booster(model_file=lgb_path)
-
                 meta_artifact = joblib.load(meta_path)
                 meta_model = meta_artifact.get('meta')
                 feature_names = meta_artifact.get('features', [])
                 train_medians = meta_artifact.get('train_medians', {})
-                serving_mode = self._determine_serving_mode(xgb_model, feature_names)
+
+                if serving_mode == 'xgb_primary':
+                    serving_mode = self._determine_serving_mode(xgb_model, feature_names)
+                elif serving_mode == 'lgb_primary':
+                    logger.info("Using manifest-pinned LightGBM primary serving for %s", target.upper())
 
                 self.models[target] = {
                     'xgb': xgb_model,
@@ -246,19 +259,29 @@ class PredictionEngine:
                 xgb_path = os.path.join(artifacts_dir, f'{artifact_prefix}_xgb.json')
                 lgb_path = os.path.join(artifacts_dir, f'{artifact_prefix}_lgb.txt')
                 meta_path = os.path.join(artifacts_dir, f'{artifact_prefix}_meta.pkl')
+                serving_mode = self._manifest_serving_mode('so', artifact_prefix)
 
-                if not os.path.exists(xgb_path) or not os.path.exists(lgb_path) or not os.path.exists(meta_path):
+                required_paths = [lgb_path, meta_path]
+                if serving_mode == 'xgb_primary':
+                    required_paths.append(xgb_path)
+
+                if any(not os.path.exists(path) for path in required_paths):
                     logger.warning("⚠️ SO %s+ ensemble artifacts missing at %s", threshold, artifacts_dir)
                     self.so_models[threshold] = None
                     continue
 
-                xgb_model = xgb.XGBClassifier()
-                xgb_model.load_model(xgb_path)
+                xgb_model = None
+                if os.path.exists(xgb_path):
+                    xgb_model = xgb.XGBClassifier()
+                    xgb_model.load_model(xgb_path)
                 lgb_model = lgb.Booster(model_file=lgb_path)
                 meta_artifact = joblib.load(meta_path)
                 feature_names = meta_artifact.get('features', [])
                 train_medians = meta_artifact.get('train_medians', {})
-                serving_mode = self._determine_serving_mode(xgb_model, feature_names)
+                if serving_mode == 'xgb_primary':
+                    serving_mode = self._determine_serving_mode(xgb_model, feature_names)
+                elif serving_mode == 'lgb_primary':
+                    logger.info("Using manifest-pinned LightGBM primary serving for SO %s+", threshold)
 
                 self.so_models[threshold] = {
                     'xgb': xgb_model,
@@ -292,6 +315,29 @@ class PredictionEngine:
             self.meta_model = None
             self.feature_names = []
             self.train_medians = {}
+
+    def _load_serving_manifest(self, artifacts_dir: str) -> Dict:
+        path = os.path.join(artifacts_dir, SERVING_MANIFEST_FILENAME)
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path, 'r', encoding='utf-8') as fh:
+                return json.load(fh)
+        except Exception as exc:
+            logger.warning("Could not load serving manifest from %s: %s", path, exc)
+            return {}
+
+    def _manifest_serving_mode(self, target: str, artifact_prefix: str) -> str:
+        default_mode = 'xgb_primary'
+        manifest = self.serving_manifest or {}
+        if target == 'so':
+            target_cfg = (manifest.get('targets') or {}).get(artifact_prefix)
+            if target_cfg:
+                return target_cfg.get('serving_mode', default_mode)
+        target_cfg = (manifest.get('targets') or {}).get(target)
+        if target_cfg:
+            return target_cfg.get('serving_mode', default_mode)
+        return default_mode
 
     def _determine_serving_mode(self, xgb_model, feature_names: List[str]) -> str:
         try:
@@ -420,10 +466,11 @@ class PredictionEngine:
         if not prefix:
             return {}
         paths = [
-            os.path.join(artifacts_dir, f'{prefix}_xgb.json'),
             os.path.join(artifacts_dir, f'{prefix}_lgb.txt'),
             os.path.join(artifacts_dir, f'{prefix}_meta.pkl'),
         ]
+        if model_data.get('serving_mode') == 'xgb_primary':
+            paths.append(os.path.join(artifacts_dir, f'{prefix}_xgb.json'))
         existing = [p for p in paths if os.path.exists(p)]
         if not existing:
             return {'artifact_prefix': prefix}
@@ -433,6 +480,7 @@ class PredictionEngine:
             'updated_at': datetime.fromtimestamp(latest_mtime).isoformat(),
             'feature_count': len(model_data.get('features', [])),
             'serving_mode': model_data.get('serving_mode', 'xgb_primary'),
+            'manifest': ((self.serving_manifest or {}).get('targets') or {}).get(prefix) or ((self.serving_manifest or {}).get('targets') or {}).get(prefix.split('_')[0]),
         }
 
     def _expected_calibration_error(self, y_true: np.ndarray, y_prob: np.ndarray, bins: int = 10) -> float:

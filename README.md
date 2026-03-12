@@ -189,6 +189,13 @@ python models/train_pitcher_strikeout_models.py
 
 Training is intended to be run from the terminal by a developer or agent. The dashboard serves saved artifacts and should not be treated as the training surface.
 
+### Serving artifacts
+
+- live serving now uses an explicit manifest at [models/artifacts/serving_manifest.json](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/models/artifacts/serving_manifest.json)
+- this pins the production artifact package per target instead of inferring serving behavior from whatever local artifact files happen to exist
+- current production configuration is pinned to the committed `LightGBM` + `meta` packages
+- local experimental `xgb.json` files should not affect runtime unless the manifest is intentionally changed
+
 ### Dashboard behavior notes
 
 - prediction controls auto-refresh; there is no manual `Load Predictions` step

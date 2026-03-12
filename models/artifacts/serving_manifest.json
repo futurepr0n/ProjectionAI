@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "description": "Explicit production-serving artifact manifest. Avoids runtime inference from local experimental files.",
+  "targets": {
+    "hr": {
+      "artifact_prefix": "hr",
+      "serving_mode": "lgb_primary",
+      "feature_count": 56,
+      "notes": "Pinned to committed stable LightGBM/meta artifact package."
+    },
+    "hit": {
+      "artifact_prefix": "hit",
+      "serving_mode": "lgb_primary",
+      "feature_count": 56,
+      "notes": "Pinned to committed stable LightGBM/meta artifact package."
+    },
+    "pitcher_so_3_plus": {
+      "artifact_prefix": "pitcher_so_3_plus",
+      "serving_mode": "lgb_primary",
+      "feature_count": 47,
+      "notes": "Pinned to committed stable LightGBM/meta artifact package."
+    },
+    "pitcher_so_4_plus": {
+      "artifact_prefix": "pitcher_so_4_plus",
+      "serving_mode": "lgb_primary",
+      "feature_count": 47,
+      "notes": "Pinned to committed stable LightGBM/meta artifact package."
+    },
+    "pitcher_so_5_plus": {
+      "artifact_prefix": "pitcher_so_5_plus",
+      "serving_mode": "lgb_primary",
+      "feature_count": 47,
+      "notes": "Pinned to committed stable LightGBM/meta artifact package."
+    },
+    "pitcher_so_6_plus": {
+      "artifact_prefix": "pitcher_so_6_plus",
+      "serving_mode": "lgb_primary",
+      "feature_count": 47,
+      "notes": "Pinned to committed stable LightGBM/meta artifact package."
+    }
+  }
+}
