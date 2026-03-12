@@ -111,6 +111,7 @@ Important docs:
 - [docs/NAME_MATCHING_INVESTIGATION.md](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/docs/NAME_MATCHING_INVESTIGATION.md)
 - [docs/IMPLEMENTATION_BACKLOG.md](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/docs/IMPLEMENTATION_BACKLOG.md)
 - [docs/HITTER_RECENCY_OPTIMIZATION_PLAN.md](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/docs/HITTER_RECENCY_OPTIMIZATION_PLAN.md)
+- [docs/PRODUCTION_RUNBOOK.md](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/docs/PRODUCTION_RUNBOOK.md)
 
 ## Running Locally
 
