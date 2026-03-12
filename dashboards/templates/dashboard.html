@@ -194,6 +194,15 @@
         }
         .result-hit { background: #00ff88; color: #000; }
         .result-miss { background: #ff4444; color: #fff; }
+        .warning-badge {
+            padding: 4px 10px;
+            border-radius: 15px;
+            font-weight: bold;
+            font-size: 0.72rem;
+            margin-left: 8px;
+            background: #ffd166;
+            color: #2b2000;
+        }
         
         .metrics {
             display: grid;
@@ -411,6 +420,15 @@
                     <option value="so">Starter Strikeouts</option>
                 </select>
             </div>
+            <div class="filter-group" id="recent-lookback-group">
+                <label>Recent Form:</label>
+                <select id="recent-lookback-games" onchange="loadPredictions()">
+                    <option value="5">Last 5 Games</option>
+                    <option value="10">Last 10 Games</option>
+                    <option value="15">Last 15 Games</option>
+                    <option value="20" selected>Last 20 Games</option>
+                </select>
+            </div>
             <div class="filter-group slider-filter" id="so-threshold-group" style="display: none;">
                 <label>SO Threshold:</label>
                 <input type="range" id="so-threshold" min="3" max="6" step="1" value="3" oninput="updateSoThresholdLabel()" onchange="handleSoThresholdChange()">
@@ -447,6 +465,19 @@
             </div>
             <button class="btn btn-clear" onclick="clearFilters()">Clear Filters</button>
             <button class="btn" onclick="showAllDates()">View All Dates</button>
+        </div>
+
+        <div id="starter-override-panel" class="card" style="display: none; margin-bottom: 18px; padding: 16px 18px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+                <div>
+                    <h3 style="margin: 0; font-size: 1rem;">Starter Overrides</h3>
+                    <div style="color: #9aa3c7; font-size: 0.82rem; margin-top: 4px;">
+                        Override a team’s starter to rerun hitter predictions against a different pitcher.
+                    </div>
+                </div>
+                <button class="btn btn-clear" onclick="clearStarterOverrides()">Reset Starters</button>
+            </div>
+            <div id="starter-override-grid" style="margin-top: 14px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;"></div>
         </div>
 
         <div id="summary-box" class="summary-box" style="display: none;">
@@ -515,6 +546,10 @@
         let currentTarget = 'hr';
         let availableTeams = [];
         let currentDisplayedPredictions = [];
+        let currentModelInfo = {};
+        let currentStatsByTarget = {};
+        let currentStarterOverrides = {};
+        let currentStarterOptions = [];
 
         function currentSoThreshold() {
             return parseInt(document.getElementById('so-threshold').value || '3', 10);
@@ -529,6 +564,23 @@
         function updateSoControls() {
             const isSo = currentTarget === 'so';
             document.getElementById('so-threshold-group').style.display = isSo ? 'flex' : 'none';
+            document.getElementById('recent-lookback-group').style.display = isSo ? 'none' : 'flex';
+            if (isSo) {
+                document.getElementById('starter-override-panel').style.display = 'none';
+            }
+        }
+
+        function buildPredictionParams() {
+            const params = new URLSearchParams({ target: currentTarget });
+            if (currentTarget === 'so') {
+                params.set('so_threshold', currentSoThreshold());
+            } else {
+                params.set('recent_lookback_games', document.getElementById('recent-lookback-games').value || '10');
+                if (Object.keys(currentStarterOverrides).length > 0) {
+                    params.set('starter_overrides', JSON.stringify(currentStarterOverrides));
+                }
+            }
+            return params;
         }
 
         function hasActiveFilters() {
@@ -539,21 +591,21 @@
             );
         }
 
-        function changePredictionTarget() {
+        async function changePredictionTarget() {
             currentTarget = document.getElementById('target-select').value;
             updateSoControls();
-            loadDynamicStats();
-            loadPredictions();
+            await loadDates();
         }
 
         // Load available dates on page load
         async function loadDates() {
             try {
-                const resp = await fetch('/api/dates');
+                const select = document.getElementById('date-select');
+                const previousValue = select.value;
+                const resp = await fetch(`/api/dates?target=${encodeURIComponent(currentTarget)}`);
                 const data = await resp.json();
                 availableDates = data.dates || [];
 
-                const select = document.getElementById('date-select');
                 select.innerHTML = '<option value="">All Dates (Dynamic)</option>';
 
                 availableDates.forEach(d => {
@@ -571,9 +623,15 @@
                 // Load dynamic stats on load
                 loadDynamicStats();
 
-                // Auto-load first date after stats
-                if (availableDates.length > 0) {
+                const matchingOption = Array.from(select.options).find(opt => opt.value === previousValue);
+
+                if (matchingOption) {
+                    select.value = previousValue;
+                    loadPredictions();
+                } else if (availableDates.length > 0) {
                     select.selectedIndex = 1;
+                    loadPredictions();
+                } else {
                     loadPredictions();
                 }
             } catch (e) {
@@ -591,6 +649,7 @@
                 }
                 const resp = await fetch(`/api/stats/all-targets?${params.toString()}`);
                 const data = await resp.json();
+                currentStatsByTarget = data || {};
                 const scopeLabel = document.getElementById('prop-stats-scope');
                 for (const target of ['hr', 'hit', 'so']) {
                     const s = data[target] || {};
@@ -607,6 +666,13 @@
                                 : `${s.dataset_rows} historical rows included`;
                             picksLabel.title = scopeText;
                         }
+                    }
+                    const hitRateEl = document.getElementById(`${target}-hitrate`);
+                    if (hitRateEl && s.model_info) {
+                        const holdoutAuc = s.model_info.holdout_metrics?.xgb_roc_auc;
+                        const runtimeEce = s.model_info.runtime_calibration?.ece;
+                        const servingMode = s.model_info.serving_mode || 'unknown';
+                        hitRateEl.title = `Serving: ${servingMode} | Holdout AUC: ${holdoutAuc != null ? holdoutAuc.toFixed(3) : 'n/a'} | Runtime ECE: ${runtimeEce != null ? runtimeEce.toFixed(2) + '%' : 'n/a'}`;
                     }
                 }
                 if (scopeLabel) {
@@ -773,10 +839,7 @@
             document.getElementById('all-grid').innerHTML = '<div class="loading">Loading predictions...</div>';
 
             try {
-                const params = new URLSearchParams({ target: currentTarget });
-                if (currentTarget === 'so') {
-                    params.set('so_threshold', currentSoThreshold());
-                }
+                const params = buildPredictionParams();
                 const url = `/api/predictions/${selectedDate}?${params.toString()}`;
                 const resp = await fetch(url);
                 const data = await resp.json();
@@ -794,10 +857,7 @@
         
         function refreshDateView(dateStr) {
             if (!dateStr) return;
-            const params = new URLSearchParams({ target: currentTarget });
-            if (currentTarget === 'so') {
-                params.set('so_threshold', currentSoThreshold());
-            }
+            const params = buildPredictionParams();
             fetch(`/api/predictions/${dateStr}?${params.toString()}`)
                 .then(resp => resp.json())
                 .then(data => {
@@ -812,7 +872,11 @@
             const date = data.date;
             const target = data.target || 'hr';
             allPredictions = data.predictions || [];
+            currentModelInfo = data.model_info || {};
+            currentStarterOptions = data.starter_options || [];
+            currentStarterOverrides = data.starter_overrides || currentStarterOverrides || {};
             updateTeamFilterOptions(data.available_teams || [], true);
+            renderStarterOverrides();
             let results = allPredictions.slice();
             const stats = data.stats || {};
 
@@ -848,6 +912,8 @@
             const filterParts = [];
             if (target === 'so' && data.stats && data.stats.prop_target) {
                 filterParts.push(data.stats.prop_target);
+            } else if (data.stats && data.stats.recent_form_mode === 'games' && data.stats.recent_lookback_games) {
+                filterParts.push(`Last ${data.stats.recent_lookback_games} games`);
             }
             if (classification) filterParts.push(classification);
             if (selectedTeam) {
@@ -928,6 +994,58 @@
 
             calculateDynamicStats();
         }
+
+        function renderStarterOverrides() {
+            const panel = document.getElementById('starter-override-panel');
+            const grid = document.getElementById('starter-override-grid');
+            if (currentTarget === 'so' || !Array.isArray(currentStarterOptions) || currentStarterOptions.length === 0) {
+                panel.style.display = 'none';
+                grid.innerHTML = '';
+                return;
+            }
+
+            panel.style.display = 'block';
+            grid.innerHTML = currentStarterOptions.map(matchup => {
+                const renderTeam = (teamEntry) => {
+                    const team = teamEntry.team;
+                    const selected = currentStarterOverrides[team] || teamEntry.current_pitcher || '';
+                    const options = (teamEntry.candidates || []).map(name => {
+                        const safe = String(name).replace(/"/g, '&quot;');
+                        return `<option value="${safe}" ${name === selected ? 'selected' : ''}>${name}</option>`;
+                    }).join('');
+                    return `
+                        <div style="display:flex; flex-direction:column; gap:6px;">
+                            <div style="font-size:0.8rem; color:#9aa3c7;">${team}</div>
+                            <select onchange="updateStarterOverride('${team}', this.value)" style="background:#111833; color:#fff; border:1px solid #2c3a6b; border-radius:8px; padding:8px;">
+                                ${options}
+                            </select>
+                        </div>
+                    `;
+                };
+
+                return `
+                    <div style="background: rgba(15, 22, 48, 0.8); border: 1px solid rgba(86, 113, 255, 0.18); border-radius: 12px; padding: 12px;">
+                        <div style="font-weight:700; margin-bottom:10px;">${matchup.matchup}</div>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                            ${renderTeam(matchup.away_team)}
+                            ${renderTeam(matchup.home_team)}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function updateStarterOverride(team, pitcherName) {
+            if (!team || !pitcherName) return;
+            currentStarterOverrides[team] = pitcherName;
+            loadPredictions();
+        }
+
+        function clearStarterOverrides() {
+            currentStarterOverrides = {};
+            renderStarterOverrides();
+            loadPredictions();
+        }
         
         function createCard(r) {
             const target = currentTarget || 'hr';
@@ -956,6 +1074,7 @@
             const signalDisplay = signalLabels[hrClass] || hrClass || 'Unknown';
 
             let resultBadge = '';
+            let teamBadge = '';
             let resultLabel = 'Result';
             let resultDisplay = '-';
 
@@ -977,6 +1096,10 @@
             }
 
             const cardClass = r[resultKey] ? 'correct' : (r[resultKey] === false ? 'incorrect' : '');
+            if (r.team_validation && r.team_validation.warning) {
+                const currentTeam = r.team_validation.current_team || 'unknown';
+                teamBadge = `<span class="warning-badge" title="Possible team mismatch: prediction team ${r.team || '—'} differs from current team ${currentTeam}.">Team?</span>`;
+            }
 
             return `
                 <div class="prediction-card ${signal} ${cardClass}" onclick="openPredictionModalByIndex(${r.__display_index})">
@@ -987,6 +1110,7 @@
                         </div>
                         <div>
                             <span class="signal-badge signal-${signal}">${signalDisplay}</span>
+                            ${teamBadge}
                             ${resultBadge}
                         </div>
                     </div>
@@ -1079,12 +1203,25 @@
                     { label: 'Score', value: prediction.score != null ? prediction.score.toFixed(1) : '—' },
                     { label: 'Model Probability', value: prediction.probability != null ? (prediction.probability * 100).toFixed(1) : '—', suffix: '%' },
                     { label: 'Summary', value: predictionExplanation.summary || 'No summary available' },
-                ])
+                ]),
+                renderDetailCard('Model Context', [
+                    { label: 'Serving mode', value: currentModelInfo.serving_mode || '—' },
+                    { label: 'Artifact', value: currentModelInfo.artifact?.artifact_prefix || '—' },
+                    { label: 'Holdout AUC', value: currentModelInfo.holdout_metrics?.xgb_roc_auc != null ? currentModelInfo.holdout_metrics.xgb_roc_auc.toFixed(3) : '—' },
+                    { label: 'Runtime ECE', value: currentModelInfo.runtime_calibration?.ece != null ? currentModelInfo.runtime_calibration.ece.toFixed(2) : '—', suffix: '%' },
+                ]),
+                renderDetailCard('Team Validation', [
+                    { label: 'Status', value: prediction.team_validation?.status || 'unknown' },
+                    { label: 'Current team', value: prediction.team_validation?.current_team || '—' },
+                    { label: 'Official roster teams', value: (prediction.team_validation?.official_roster_teams || []).join(', ') || '—' },
+                    { label: 'Official transaction teams', value: (prediction.team_validation?.official_transaction_teams || []).join(', ') || '—' },
+                ]),
             ].join('');
 
             document.getElementById('modal-prediction-grid').innerHTML = [
                 renderDetailCard('Why This Rated Here', predictionExplanation.components || []),
                 renderDetailCard('Prediction Breakdown', predictionExplanation.details || []),
+                ...((predictionExplanation.extra_cards || []).map(card => renderDetailCard(card.title, card.rows || []))),
                 renderModelDrivers(predictionExplanation.model_drivers || {}),
             ].join('');
 
@@ -1140,6 +1277,11 @@
                 const indicator = document.getElementById('model-status-indicator');
                 const statusText = document.getElementById('model-status-text');
                 const statusDot = indicator.querySelector('div:first-child');
+                const activeTargetStats = stats.targets?.[currentTarget] || stats.targets?.hr || {};
+                const activeAuc = activeTargetStats.holdout_metrics?.xgb_roc_auc;
+                const activeEce = activeTargetStats.runtime_calibration?.ece;
+                const activeServing = activeTargetStats.serving_mode || stats.serving_strategy || 'unknown';
+                indicator.title = `Serving: ${activeServing} | Holdout AUC: ${activeAuc != null ? activeAuc.toFixed(3) : 'n/a'} | Runtime ECE: ${activeEce != null ? activeEce.toFixed(2) + '%' : 'n/a'}`;
 
                 if (stats.artifacts_ready && stats.model_status === 'ready') {
                     statusDot.style.background = '#00ff88';

@@ -8,6 +8,7 @@ that hitting_stats introduces. No dependency on hellraiser_picks for training.
 
 hellraiser_picks is used only in build_for_prediction() at inference time.
 """
+import argparse
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import pandas as pd
@@ -18,7 +19,7 @@ from pathlib import Path
 import os
 from collections import defaultdict
 
-from name_utils import normalize_to_canonical
+from name_utils import normalize_name, normalize_to_canonical
 from feature_engineering import add_park_factors, add_travel_fatigue
 
 logging.basicConfig(level=logging.INFO)
@@ -49,6 +50,35 @@ TEAM_CODE_ALIASES = {
     'OAK': 'OAK',
 }
 
+PITCH_TYPE_ALIASES = {
+    'four-seam fb': 'FF',
+    '4-seam fb': 'FF',
+    'four-seam fastball': 'FF',
+    'ff': 'FF',
+    'sinker': 'SI',
+    'si': 'SI',
+    'slider': 'SL',
+    'sl': 'SL',
+    'sweeper': 'ST',
+    'st': 'ST',
+    'curve': 'CU',
+    'curveball': 'CU',
+    'cu': 'CU',
+    'changeup': 'CH',
+    'change-up': 'CH',
+    'ch': 'CH',
+    'cutter': 'FC',
+    'fc': 'FC',
+    'splitter': 'FS',
+    'fs': 'FS',
+    'slurve': 'SV',
+    'sv': 'SV',
+}
+
+DEFAULT_RECENT_LOOKBACK_GAMES = 20
+RECENT_FORM_WINDOWS = (3, 5, 10, 20)
+RECENT_FORM_SHRINKAGE_PA = 20.0
+
 
 def _normalize_team_code(team_code: str) -> str:
     if not team_code:
@@ -76,9 +106,15 @@ def _pitcher_name_key(name: str) -> str:
     return cleaned
 
 
+def _normalize_pitch_type(value: str) -> str:
+    text = str(value or '').strip().lower()
+    return PITCH_TYPE_ALIASES.get(text, str(value or '').strip().upper()[:2])
+
+
 class DatasetBuilder:
-    def __init__(self):
+    def __init__(self, recent_lookback_games: int = DEFAULT_RECENT_LOOKBACK_GAMES):
         self.conn = self._connect()
+        self.recent_lookback_games = max(1, int(recent_lookback_games or DEFAULT_RECENT_LOOKBACK_GAMES))
         self._canonical_cache = {}
         self._resolution_cache = {}
         self._resolution_stats = defaultdict(lambda: {
@@ -186,6 +222,8 @@ class DatasetBuilder:
         # Season-level Statcast: EV + xStats
         df = self._attach_hitter_ev(df)
         df = self._attach_xstats(df)
+        df = self._attach_handedness_features(df)
+        df = self._attach_lineup_context(df)
 
         # Rolling 14-day rates per batter as of each game_date (no leakage)
         df = self._attach_recent_rates(df)
@@ -198,10 +236,9 @@ class DatasetBuilder:
         # Context: park, travel, weather defaults
         df = add_park_factors(df, self.conn)
         df = add_travel_fatigue(df, self.conn)
-        df['wind_speed_mph'] = 0.0
-        df['temp_f'] = 70.0
-        df['precip_prob'] = 0.0
-        df['wind_out_factor'] = 1.0
+        df = self._attach_historical_weather(df)
+        df = self._attach_hr_weather_interactions(df)
+        df = self._attach_recent_context_interactions(df)
 
         drop_cols = ['batter_canonical', 'opp_team']
         df = df.drop(columns=[c for c in drop_cols if c in df.columns])
@@ -364,48 +401,365 @@ class DatasetBuilder:
         logger.info(f"xStats match rate: {df['xwoba'].notna().mean()*100:.1f}%")
         return df
 
+    def _attach_handedness_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        feature_cols = [
+            'batter_bats_right',
+            'batter_bats_left',
+            'batter_is_switch',
+            'pitcher_throws_right',
+            'pitcher_throws_left',
+            'same_hand_matchup',
+            'platoon_advantage',
+        ]
+        if df.empty:
+            for col in feature_cols:
+                df[col] = np.nan
+            return df
+
+        self.conn.rollback()
+        cursor = self.conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT
+                COALESCE(full_name, display_name) AS full_name,
+                bats,
+                throws,
+                player_type
+            FROM players
+            WHERE COALESCE(full_name, display_name) IS NOT NULL
+        """)
+        players_df = pd.DataFrame(cursor.fetchall())
+
+        batter_lookup = {}
+        if not players_df.empty:
+            players_df['normalized_name'] = players_df['full_name'].apply(normalize_name)
+            players_df['canonical'] = players_df['full_name'].apply(lambda n: self._canonical(n, 'players'))
+            players_df['bats'] = players_df['bats'].astype(str).str.upper().str.strip()
+            players_df['throws'] = players_df['throws'].astype(str).str.upper().str.strip()
+            for _, row in players_df.drop_duplicates('canonical').iterrows():
+                batter_lookup[row['canonical']] = row['bats']
+
+        pitcher_lookup = {}
+        if not players_df.empty:
+            pitcher_rows = players_df[players_df['throws'].isin(['L', 'R'])].copy()
+            for _, row in pitcher_rows.drop_duplicates('normalized_name').iterrows():
+                pitcher_lookup[row['normalized_name']] = row['throws']
+
+        batter_bats = df['batter_canonical'].map(batter_lookup)
+        pitcher_throws = df['pitcher_name'].fillna('').apply(normalize_name).map(pitcher_lookup)
+
+        df['batter_bats_right'] = (batter_bats == 'R').astype(float)
+        df['batter_bats_left'] = (batter_bats == 'L').astype(float)
+        df['batter_is_switch'] = (batter_bats == 'S').astype(float)
+        df['pitcher_throws_right'] = (pitcher_throws == 'R').astype(float)
+        df['pitcher_throws_left'] = (pitcher_throws == 'L').astype(float)
+        df['same_hand_matchup'] = np.where(
+            batter_bats.isin(['L', 'R']) & pitcher_throws.isin(['L', 'R']),
+            (batter_bats == pitcher_throws).astype(float),
+            np.where(batter_bats == 'S', 0.0, np.nan)
+        )
+        df['platoon_advantage'] = np.where(
+            batter_bats.isin(['L', 'R']) & pitcher_throws.isin(['L', 'R']),
+            (batter_bats != pitcher_throws).astype(float),
+            np.where(batter_bats == 'S', 1.0, np.nan)
+        )
+
+        logger.info(
+            "Attached handedness features: batter bats %.1f%% | pitcher throws %.1f%%",
+            batter_bats.notna().mean() * 100,
+            pitcher_throws.notna().mean() * 100,
+        )
+        return df
+
+    def _attach_lineup_context(self, df: pd.DataFrame) -> pd.DataFrame:
+        feature_cols = [
+            'lineup_confirmed',
+            'lineup_slot',
+            'top_half_lineup',
+            'middle_lineup',
+            'bottom_half_lineup',
+            'projected_pa',
+        ]
+        if df.empty:
+            for col in feature_cols:
+                df[col] = np.nan
+            return df
+
+        self.conn.rollback()
+        cursor = self.conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT
+                game_date,
+                home_team,
+                away_team,
+                home_lineup,
+                away_lineup
+            FROM daily_lineups
+            WHERE home_lineup IS NOT NULL
+               OR away_lineup IS NOT NULL
+        """)
+        lineups_df = pd.DataFrame(cursor.fetchall())
+        if lineups_df.empty:
+            for col in feature_cols:
+                df[col] = np.nan
+            return df
+
+        def _iter_batting_order(lineup):
+            if not isinstance(lineup, dict):
+                return []
+            batting_order = lineup.get('batting_order', []) or []
+            results = []
+            for idx, entry in enumerate(batting_order, start=1):
+                if isinstance(entry, dict):
+                    name = (
+                        entry.get('name')
+                        or entry.get('player_name')
+                        or entry.get('fullName')
+                        or entry.get('player')
+                    )
+                else:
+                    name = entry
+                if not name:
+                    continue
+                results.append((idx, str(name).strip()))
+            return results
+
+        lineup_records = []
+        pa_by_slot = {
+            1: 4.8,
+            2: 4.7,
+            3: 4.6,
+            4: 4.5,
+            5: 4.3,
+            6: 4.2,
+            7: 4.0,
+            8: 3.9,
+            9: 3.8,
+        }
+
+        for _, row in lineups_df.iterrows():
+            for side in ('home', 'away'):
+                lineup = row.get(f'{side}_lineup')
+                team = row.get(f'{side}_team')
+                confirmed = bool(lineup.get('confirmed')) if isinstance(lineup, dict) else False
+                for slot, raw_name in _iter_batting_order(lineup):
+                    lineup_records.append({
+                        'game_date': row['game_date'],
+                        'team': team,
+                        'batter_canonical': self._canonical(raw_name, 'daily_lineups'),
+                        'lineup_confirmed': float(confirmed),
+                        'lineup_slot': float(slot),
+                        'top_half_lineup': float(slot <= 3),
+                        'middle_lineup': float(4 <= slot <= 6),
+                        'bottom_half_lineup': float(slot >= 7),
+                        'projected_pa': pa_by_slot.get(slot, 4.0),
+                    })
+
+        lineup_lookup = pd.DataFrame(lineup_records)
+        if lineup_lookup.empty:
+            for col in feature_cols:
+                df[col] = np.nan
+            return df
+
+        lineup_lookup['game_date'] = pd.to_datetime(lineup_lookup['game_date']).dt.date
+        lineup_lookup['team'] = lineup_lookup['team'].apply(_normalize_team_code)
+        lineup_lookup = lineup_lookup.drop_duplicates(['game_date', 'team', 'batter_canonical'])
+
+        merge_source = df.copy()
+        merge_source['team'] = merge_source['team'].apply(_normalize_team_code)
+
+        merged = merge_source.merge(
+            lineup_lookup,
+            on=['game_date', 'team', 'batter_canonical'],
+            how='left'
+        )
+        logger.info(
+            "Attached lineup context: %.1f%% rows matched a lineup slot",
+            merged['lineup_slot'].notna().mean() * 100
+        )
+        return merged
+
     def _attach_recent_rates(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Rolling 14-day HR / hit / SO rates per batter, computed per unique game_date."""
+        """Rolling last-N-games HR / hit / SO rates per batter, computed per unique game_date."""
         dates = sorted(df['game_date'].unique().tolist())
         cursor = self.conn.cursor(cursor_factory=RealDictCursor)
         rate_rows = []
+        recency_sql = self._recent_rate_select_sql()
 
         for gd in dates:
             self.conn.rollback()
-            cursor.execute("""
+            cursor.execute(f"""
+                WITH batter_games AS (
+                    SELECT
+                        pp.batter,
+                        g.game_date,
+                        pp.game_id,
+                        MAX(CASE WHEN pp.play_result = 'Home Run' THEN 1 ELSE 0 END)::numeric AS hr_game,
+                        MAX(CASE WHEN pp.play_result IN ('Single','Double','Triple','Home Run') THEN 1 ELSE 0 END)::numeric AS hit_game,
+                        MAX(CASE WHEN pp.play_result = 'Strikeout' THEN 1 ELSE 0 END)::numeric AS so_game,
+                        COUNT(*) FILTER (
+                            WHERE pp.play_result <> 'Other'
+                              AND pp.play_result IS NOT NULL
+                        )::numeric AS pa_game
+                    FROM play_by_play_plays pp
+                    JOIN games g ON pp.game_id = g.game_id
+                    WHERE g.game_date < %s::date
+                      AND pp.batter IS NOT NULL
+                    GROUP BY pp.batter, g.game_date, pp.game_id
+                ),
+                ranked_games AS (
+                    SELECT
+                        batter,
+                        game_date,
+                        hr_game,
+                        hit_game,
+                        so_game,
+                        pa_game,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY batter
+                            ORDER BY game_date DESC, game_id DESC
+                        ) AS rn
+                    FROM batter_games
+                )
                 SELECT
-                    pp.batter,
-                    COUNT(CASE WHEN pp.play_result = 'Home Run' THEN 1 END)::numeric /
-                        NULLIF(COUNT(*), 0)                                          AS recent_hr_rate_14d,
-                    COUNT(CASE WHEN pp.play_result IN ('Single','Double','Triple','Home Run') THEN 1 END)::numeric /
-                        NULLIF(COUNT(*), 0)                                          AS recent_hit_rate_14d,
-                    COUNT(CASE WHEN pp.play_result = 'Strikeout' THEN 1 END)::numeric /
-                        NULLIF(COUNT(*), 0)                                          AS recent_so_rate_14d
-                FROM play_by_play_plays pp
-                JOIN games g ON pp.game_id = g.game_id
-                WHERE g.game_date >= %s::date - INTERVAL '14 days'
-                  AND g.game_date <  %s::date
-                  AND pp.batter IS NOT NULL
-                GROUP BY pp.batter
-            """, (gd, gd))
+                    batter,
+                    MAX(game_date) AS last_game_date,
+                    AVG(hr_game) AS season_hr_rate_to_date,
+                    AVG(hit_game) AS season_hit_rate_to_date,
+                    AVG(so_game) AS season_so_rate_to_date,
+                    COUNT(*) AS season_games_prior,
+                    SUM(pa_game) AS season_pa_prior,
+                    {recency_sql}
+                FROM ranked_games
+                GROUP BY batter
+            """, (gd, *self._recent_rate_query_params()))
             for row in cursor.fetchall():
-                rate_rows.append({
+                row_dict = {
                     'game_date':        gd,
                     'batter_canonical': self._canonical(row['batter'], 'play_by_play_recent_rates'),
-                    'recent_hr_rate_14d':  float(row['recent_hr_rate_14d'])  if row['recent_hr_rate_14d']  else None,
-                    'recent_hit_rate_14d': float(row['recent_hit_rate_14d']) if row['recent_hit_rate_14d'] else None,
-                    'recent_so_rate_14d':  float(row['recent_so_rate_14d'])  if row['recent_so_rate_14d']  else None,
-                })
+                    'recent_hr_rate_14d':  self._optional_float(row.get('recent_hr_rate_14d')),
+                    'recent_hit_rate_14d': self._optional_float(row.get('recent_hit_rate_14d')),
+                    'recent_so_rate_14d':  self._optional_float(row.get('recent_so_rate_14d')),
+                    'recent_form_lookback_games': self.recent_lookback_games,
+                    'recent_form_games_used': self._optional_float(row.get('recent_form_games_used')),
+                    'recent_form_pa_used': self._optional_float(row.get('recent_form_pa_used')),
+                    'days_since_last_game': self._days_since(gd, row.get('last_game_date')),
+                    'season_hr_rate_to_date': self._optional_float(row.get('season_hr_rate_to_date')),
+                    'season_hit_rate_to_date': self._optional_float(row.get('season_hit_rate_to_date')),
+                    'season_so_rate_to_date': self._optional_float(row.get('season_so_rate_to_date')),
+                    'season_games_prior': self._optional_float(row.get('season_games_prior')),
+                    'season_pa_prior': self._optional_float(row.get('season_pa_prior')),
+                }
+                for window in RECENT_FORM_WINDOWS:
+                    suffix = f"g{window}"
+                    row_dict[f'recent_hr_rate_{suffix}'] = self._optional_float(row.get(f'recent_hr_rate_{suffix}'))
+                    row_dict[f'recent_hit_rate_{suffix}'] = self._optional_float(row.get(f'recent_hit_rate_{suffix}'))
+                    row_dict[f'recent_so_rate_{suffix}'] = self._optional_float(row.get(f'recent_so_rate_{suffix}'))
+                    row_dict[f'recent_games_used_{suffix}'] = self._optional_float(row.get(f'recent_games_used_{suffix}'))
+                    row_dict[f'recent_pa_used_{suffix}'] = self._optional_float(row.get(f'recent_pa_used_{suffix}'))
+                row_dict.update(self._recent_shrinkage_features(row_dict))
+                rate_rows.append(row_dict)
 
         if not rate_rows:
-            for col in ('recent_hr_rate_14d', 'recent_hit_rate_14d', 'recent_so_rate_14d'):
+            for col in (
+                'recent_hr_rate_14d',
+                'recent_hit_rate_14d',
+                'recent_so_rate_14d',
+                'recent_form_games_used',
+                'recent_form_pa_used',
+                'days_since_last_game',
+                'season_hr_rate_to_date',
+                'season_hit_rate_to_date',
+                'season_so_rate_to_date',
+                'season_games_prior',
+                'season_pa_prior',
+                'shrunk_recent_hr_rate',
+                'shrunk_recent_hit_rate',
+                'shrunk_recent_so_rate',
+                'recent_vs_season_hr_delta',
+                'recent_vs_season_hit_delta',
+                'recent_vs_season_so_delta',
+            ):
                 df[col] = np.nan
+            for window in RECENT_FORM_WINDOWS:
+                suffix = f"g{window}"
+                for col in (
+                    f'recent_hr_rate_{suffix}',
+                    f'recent_hit_rate_{suffix}',
+                    f'recent_so_rate_{suffix}',
+                    f'recent_games_used_{suffix}',
+                    f'recent_pa_used_{suffix}',
+                ):
+                    df[col] = np.nan
             return df
 
         rates = pd.DataFrame(rate_rows).drop_duplicates(subset=['game_date', 'batter_canonical'])
         df = df.merge(rates, on=['game_date', 'batter_canonical'], how='left')
-        logger.info(f"Recent rates match rate: {df['recent_hr_rate_14d'].notna().mean()*100:.1f}%")
+        logger.info(
+            "Recent rates match rate: %.1f%% using last %s games",
+            df['recent_hr_rate_14d'].notna().mean() * 100,
+            self.recent_lookback_games,
+        )
         return df
+
+    def _recent_rate_select_sql(self) -> str:
+        fields = []
+        for window in RECENT_FORM_WINDOWS:
+            suffix = f"g{window}"
+            fields.extend([
+                f"AVG(hr_game) FILTER (WHERE rn <= {window}) AS recent_hr_rate_{suffix}",
+                f"AVG(hit_game) FILTER (WHERE rn <= {window}) AS recent_hit_rate_{suffix}",
+                f"AVG(so_game) FILTER (WHERE rn <= {window}) AS recent_so_rate_{suffix}",
+                f"COUNT(*) FILTER (WHERE rn <= {window}) AS recent_games_used_{suffix}",
+                f"SUM(pa_game) FILTER (WHERE rn <= {window}) AS recent_pa_used_{suffix}",
+            ])
+        fields.extend([
+            f"AVG(hr_game) FILTER (WHERE rn <= %s) AS recent_hr_rate_14d",
+            f"AVG(hit_game) FILTER (WHERE rn <= %s) AS recent_hit_rate_14d",
+            f"AVG(so_game) FILTER (WHERE rn <= %s) AS recent_so_rate_14d",
+            f"COUNT(*) FILTER (WHERE rn <= %s) AS recent_form_games_used",
+            f"SUM(pa_game) FILTER (WHERE rn <= %s) AS recent_form_pa_used",
+        ])
+        return ",\n                    ".join(fields)
+
+    def _recent_rate_query_params(self):
+        return [self.recent_lookback_games] * 5
+
+    @staticmethod
+    def _optional_float(value):
+        if value is None or pd.isna(value):
+            return None
+        return float(value)
+
+    @staticmethod
+    def _days_since(target_date, last_game_date):
+        if last_game_date is None or pd.isna(last_game_date):
+            return None
+        return float((pd.Timestamp(target_date) - pd.Timestamp(last_game_date)).days)
+
+    @staticmethod
+    def _shrunk_rate(recent_rate, recent_pa, season_rate, shrink_pa=RECENT_FORM_SHRINKAGE_PA):
+        if recent_rate is None or season_rate is None:
+            return None
+        recent_pa = float(recent_pa or 0.0)
+        return float(((recent_rate * recent_pa) + (season_rate * shrink_pa)) / (recent_pa + shrink_pa))
+
+    def _recent_shrinkage_features(self, row_dict: dict) -> dict:
+        recent_pa = row_dict.get('recent_form_pa_used')
+        season_hr = row_dict.get('season_hr_rate_to_date')
+        season_hit = row_dict.get('season_hit_rate_to_date')
+        season_so = row_dict.get('season_so_rate_to_date')
+        recent_hr = row_dict.get('recent_hr_rate_14d')
+        recent_hit = row_dict.get('recent_hit_rate_14d')
+        recent_so = row_dict.get('recent_so_rate_14d')
+        return {
+            'shrunk_recent_hr_rate': self._shrunk_rate(recent_hr, recent_pa, season_hr),
+            'shrunk_recent_hit_rate': self._shrunk_rate(recent_hit, recent_pa, season_hit),
+            'shrunk_recent_so_rate': self._shrunk_rate(recent_so, recent_pa, season_so),
+            'recent_vs_season_hr_delta': None if recent_hr is None or season_hr is None else float(recent_hr - season_hr),
+            'recent_vs_season_hit_delta': None if recent_hit is None or season_hit is None else float(recent_hit - season_hit),
+            'recent_vs_season_so_delta': None if recent_so is None or season_so is None else float(recent_so - season_so),
+        }
 
     def _attach_pitcher_stats(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -451,6 +805,45 @@ class DatasetBuilder:
         logger.info(f"Attached pitcher rolling stats for {len(pitcher_df)} game-team pairs")
         return df
 
+    def _attach_recent_context_interactions(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return df
+
+        updated = df.copy()
+
+        def num(col, default=0.0):
+            return pd.to_numeric(updated.get(col), errors='coerce').fillna(default)
+
+        projected_pa = num('projected_pa', 4.2)
+        platoon_advantage = num('platoon_advantage', 0.0)
+        top_half = num('top_half_lineup', 0.0)
+        middle_half = num('middle_lineup', 0.0)
+        lineup_confirmed = num('lineup_confirmed', 0.0)
+
+        recent_hr = num('recent_hr_rate_14d', 0.0)
+        recent_hit = num('recent_hit_rate_14d', 0.0)
+        shrunk_hr = num('shrunk_recent_hr_rate', recent_hr)
+        shrunk_hit = num('shrunk_recent_hit_rate', recent_hit)
+        hr_delta = num('recent_vs_season_hr_delta', 0.0)
+        hit_delta = num('recent_vs_season_hit_delta', 0.0)
+
+        updated['recent_hr_x_projected_pa'] = recent_hr * projected_pa
+        updated['recent_hit_x_projected_pa'] = recent_hit * projected_pa
+        updated['shrunk_recent_hr_x_projected_pa'] = shrunk_hr * projected_pa
+        updated['shrunk_recent_hit_x_projected_pa'] = shrunk_hit * projected_pa
+        updated['recent_hr_x_platoon_advantage'] = recent_hr * platoon_advantage
+        updated['recent_hit_x_platoon_advantage'] = recent_hit * platoon_advantage
+        updated['shrunk_recent_hr_x_platoon_advantage'] = shrunk_hr * platoon_advantage
+        updated['shrunk_recent_hit_x_platoon_advantage'] = shrunk_hit * platoon_advantage
+        updated['recent_hr_x_top_half_lineup'] = recent_hr * top_half
+        updated['recent_hit_x_top_half_lineup'] = recent_hit * top_half
+        updated['recent_hr_x_middle_lineup'] = recent_hr * middle_half
+        updated['recent_hit_x_middle_lineup'] = recent_hit * middle_half
+        updated['hr_delta_x_projected_pa'] = hr_delta * projected_pa
+        updated['hit_delta_x_projected_pa'] = hit_delta * projected_pa
+        updated['projected_pa_x_lineup_confirmed'] = projected_pa * lineup_confirmed
+        return updated
+
     def _attach_pitch_type_matchups(self, df: pd.DataFrame) -> pd.DataFrame:
         self.conn.rollback()
         cursor = self.conn.cursor(cursor_factory=RealDictCursor)
@@ -469,6 +862,38 @@ class DatasetBuilder:
               AND pitch_type IS NOT NULL
         """)
         pitcher_arsenal = pd.DataFrame(cursor.fetchall())
+
+        cursor.execute("""
+            WITH pitch_events AS (
+                SELECT
+                    pp.pitcher,
+                    CASE
+                        WHEN pp.inning_half = 'Top' THEN g.home_team
+                        ELSE g.away_team
+                    END AS pitcher_team,
+                    p.play_id,
+                    p.pitch_number,
+                    p.pitch_type,
+                    p.result,
+                    pp.play_result,
+                    ROW_NUMBER() OVER (PARTITION BY p.play_id ORDER BY p.pitch_number DESC, p.id DESC) AS reverse_pitch_rank
+                FROM play_by_play_pitches p
+                JOIN play_by_play_plays pp ON pp.id = p.play_id
+                JOIN games g ON g.game_id = pp.game_id
+                WHERE pp.pitcher IS NOT NULL
+                  AND p.pitch_type IS NOT NULL
+            )
+            SELECT
+                pitcher,
+                pitcher_team,
+                pitch_type,
+                COUNT(*) AS pitch_count,
+                AVG(CASE WHEN COALESCE(result, '') ILIKE '%%swing%%strike%%' THEN 1 ELSE 0 END) AS whiff_percent,
+                AVG(CASE WHEN reverse_pitch_rank = 1 AND play_result = 'Strikeout' THEN 1 ELSE 0 END) AS k_percent
+            FROM pitch_events
+            GROUP BY pitcher, pitcher_team, pitch_type
+        """)
+        fallback_pitcher_arsenal = pd.DataFrame(cursor.fetchall())
 
         cursor.execute("""
             SELECT
@@ -516,17 +941,32 @@ class DatasetBuilder:
                 df[col] = np.nan
             return df
 
+        if not fallback_pitcher_arsenal.empty:
+            fallback_pitcher_arsenal['last_name_first_name'] = fallback_pitcher_arsenal['pitcher']
+            fallback_pitcher_arsenal['team_name_alt'] = fallback_pitcher_arsenal['pitcher_team']
+            fallback_pitcher_arsenal['pitch_type'] = fallback_pitcher_arsenal['pitch_type'].apply(_normalize_pitch_type)
+            fallback_pitcher_arsenal['pitch_usage'] = pd.to_numeric(fallback_pitcher_arsenal['pitch_count'], errors='coerce')
+            fallback_pitcher_arsenal['whiff_percent'] = pd.to_numeric(fallback_pitcher_arsenal['whiff_percent'], errors='coerce')
+            fallback_pitcher_arsenal['k_percent'] = pd.to_numeric(fallback_pitcher_arsenal['k_percent'], errors='coerce')
+            fallback_pitcher_arsenal['put_away'] = fallback_pitcher_arsenal['k_percent']
+            fallback_pitcher_arsenal = fallback_pitcher_arsenal[[
+                'last_name_first_name', 'team_name_alt', 'pitch_type', 'pitch_usage', 'whiff_percent', 'k_percent', 'put_away'
+            ]]
+            pitcher_arsenal = pd.concat([pitcher_arsenal, fallback_pitcher_arsenal], ignore_index=True)
+
         pitcher_arsenal['pitcher_name_normalized'] = pitcher_arsenal['last_name_first_name'].apply(
             lambda value: _name_from_last_first(value).strip().lower()
         )
-        pitcher_arsenal['pitcher_name_key'] = pitcher_arsenal['pitcher_name_normalized'].apply(_pitcher_name_key)
+        pitcher_arsenal['pitcher_canonical'] = pitcher_arsenal['last_name_first_name'].apply(
+            lambda value: self._canonical(_name_from_last_first(value), 'pitcher_arsenal')
+        )
         pitcher_arsenal['team_normalized'] = pitcher_arsenal['team_name_alt'].apply(_normalize_team_code)
         for col in ('pitch_usage', 'whiff_percent', 'k_percent', 'put_away'):
             pitcher_arsenal[col] = pd.to_numeric(pitcher_arsenal[col], errors='coerce')
 
         pitcher_profiles = {}
         pitcher_profiles_by_name = {}
-        for (name_key, team_code), grp in pitcher_arsenal.groupby(['pitcher_name_key', 'team_normalized'], dropna=False):
+        for (pitcher_canonical, team_code), grp in pitcher_arsenal.groupby(['pitcher_canonical', 'team_normalized'], dropna=False):
             grp = grp.dropna(subset=['pitch_usage']).sort_values('pitch_usage', ascending=False).copy()
             if grp.empty:
                 continue
@@ -545,8 +985,8 @@ class DatasetBuilder:
                 'pitcher_arsenal_whiff_percent': float(np.average(grp['whiff_percent'].fillna(0), weights=grp['pitch_usage'])) if usage_sum > 0 else np.nan,
                 'pitcher_arsenal_k_percent': float(np.average(grp['k_percent'].fillna(0), weights=grp['pitch_usage'])) if usage_sum > 0 else np.nan,
             }
-            pitcher_profiles[(name_key, team_code)] = profile
-            pitcher_profiles_by_name.setdefault(name_key, profile)
+            pitcher_profiles[(pitcher_canonical, team_code)] = profile
+            pitcher_profiles_by_name.setdefault(pitcher_canonical, profile)
 
         hitter_arsenal['batter_canonical'] = hitter_arsenal['last_name_first_name'].apply(
             lambda n: self._canonical(n, 'hitter_pitch_arsenal')
@@ -567,13 +1007,13 @@ class DatasetBuilder:
             }
 
         df = df.copy()
-        df['pitcher_name_key'] = df['pitcher_name'].apply(_pitcher_name_key)
+        df['pitcher_canonical'] = df['pitcher_name'].apply(lambda value: self._canonical(value, 'pitcher_name_matchup'))
         df['opp_team_normalized'] = df['opp_team'].apply(_normalize_team_code)
         rows = []
         for idx, row in df.iterrows():
-            profile = pitcher_profiles.get((row['pitcher_name_key'], row['opp_team_normalized']))
+            profile = pitcher_profiles.get((row['pitcher_canonical'], row['opp_team_normalized']))
             if profile is None:
-                profile = pitcher_profiles_by_name.get(row['pitcher_name_key'])
+                profile = pitcher_profiles_by_name.get(row['pitcher_canonical'])
             primary = profile.get('primary_pitch_type') if profile else None
             secondary = profile.get('secondary_pitch_type') if profile else None
             batter_primary = batter_profiles.get((row['batter_canonical'], primary), {}) if primary else {}
@@ -598,6 +1038,8 @@ class DatasetBuilder:
 
             rows.append({
                 'row_index': idx,
+                'primary_pitch_type': primary,
+                'secondary_pitch_type': secondary,
                 'pitcher_primary_pitch_usage': profile.get('pitcher_primary_pitch_usage') if profile else np.nan,
                 'pitcher_primary_pitch_whiff_percent': profile.get('pitcher_primary_pitch_whiff_percent') if profile else np.nan,
                 'pitcher_primary_pitch_k_percent': profile.get('pitcher_primary_pitch_k_percent') if profile else np.nan,
@@ -623,7 +1065,7 @@ class DatasetBuilder:
 
         join_df = pd.DataFrame(rows).set_index('row_index')
         df = df.join(join_df, how='left')
-        df = df.drop(columns=['pitcher_name_key', 'opp_team_normalized'])
+        df = df.drop(columns=['pitcher_canonical', 'opp_team_normalized'])
         logger.info("Attached hitter pitch-type matchup features")
         return df
 
@@ -680,6 +1122,132 @@ class DatasetBuilder:
         )
         return history
 
+    def _attach_historical_weather(self, df: pd.DataFrame) -> pd.DataFrame:
+        feature_cols = [
+            'wind_speed_mph',
+            'temp_f',
+            'precip_prob',
+            'wind_out_factor',
+            'dew_point_f',
+            'air_carry_factor',
+            'wind_out_to_center_mph',
+            'wind_out_to_left_field_mph',
+            'wind_out_to_right_field_mph',
+            'wind_in_from_center_mph',
+            'crosswind_mph',
+            'roof_closed_estimated',
+            'roof_status_confidence',
+            'weather_data_available',
+        ]
+        if df.empty:
+            for col in feature_cols:
+                df[col] = np.nan
+            return df
+
+        self.conn.rollback()
+        cursor = self.conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT
+                game_id,
+                wind_speed_mph,
+                temp_f,
+                precipitation_mm,
+                wind_out_factor,
+                dew_point_f,
+                air_carry_factor,
+                wind_out_to_center_mph,
+                wind_out_to_left_field_mph,
+                wind_out_to_right_field_mph,
+                wind_in_from_center_mph,
+                crosswind_mph,
+                roof_status_estimated,
+                roof_status_confidence,
+                weather_available
+            FROM historical_game_weather
+            WHERE game_id = ANY(%s)
+        """, (df['game_id'].dropna().unique().tolist(),))
+        weather_df = pd.DataFrame(cursor.fetchall())
+        if weather_df.empty:
+            df['wind_speed_mph'] = 0.0
+            df['temp_f'] = 70.0
+            df['precip_prob'] = 0.0
+            df['wind_out_factor'] = 1.0
+            df['dew_point_f'] = 55.0
+            df['air_carry_factor'] = 1.0
+            df['wind_out_to_center_mph'] = 0.0
+            df['wind_out_to_left_field_mph'] = 0.0
+            df['wind_out_to_right_field_mph'] = 0.0
+            df['wind_in_from_center_mph'] = 0.0
+            df['crosswind_mph'] = 0.0
+            df['roof_closed_estimated'] = 0.0
+            df['roof_status_confidence'] = 0.0
+            df['weather_data_available'] = 0.0
+            logger.warning("No historical weather rows found; using placeholder defaults")
+            return df
+
+        weather_df = weather_df.rename(columns={'precipitation_mm': 'precip_prob'})
+        merged = df.merge(weather_df, on='game_id', how='left')
+        merged['wind_speed_mph'] = pd.to_numeric(merged['wind_speed_mph'], errors='coerce').fillna(0.0)
+        merged['temp_f'] = pd.to_numeric(merged['temp_f'], errors='coerce').fillna(70.0)
+        merged['precip_prob'] = pd.to_numeric(merged['precip_prob'], errors='coerce').fillna(0.0)
+        merged['wind_out_factor'] = pd.to_numeric(merged['wind_out_factor'], errors='coerce').fillna(1.0)
+        merged['dew_point_f'] = pd.to_numeric(merged['dew_point_f'], errors='coerce').fillna(55.0)
+        merged['air_carry_factor'] = pd.to_numeric(merged['air_carry_factor'], errors='coerce').fillna(1.0)
+        merged['wind_out_to_center_mph'] = pd.to_numeric(merged['wind_out_to_center_mph'], errors='coerce').fillna(0.0)
+        merged['wind_out_to_left_field_mph'] = pd.to_numeric(merged['wind_out_to_left_field_mph'], errors='coerce').fillna(0.0)
+        merged['wind_out_to_right_field_mph'] = pd.to_numeric(merged['wind_out_to_right_field_mph'], errors='coerce').fillna(0.0)
+        merged['wind_in_from_center_mph'] = pd.to_numeric(merged['wind_in_from_center_mph'], errors='coerce').fillna(0.0)
+        merged['crosswind_mph'] = pd.to_numeric(merged['crosswind_mph'], errors='coerce').fillna(0.0)
+        merged['roof_closed_estimated'] = (merged['roof_status_estimated'].fillna('').astype(str).str.lower() == 'closed').astype(float)
+        merged['roof_status_confidence'] = pd.to_numeric(merged['roof_status_confidence'], errors='coerce').fillna(0.0)
+        merged['weather_data_available'] = merged['weather_available'].fillna(False).astype(float)
+        logger.info(
+            "Attached historical weather: %.1f%% rows with weather_available",
+            merged['weather_available'].fillna(False).astype(bool).mean() * 100
+        )
+        return merged.drop(columns=['weather_available', 'roof_status_estimated'])
+
+    def _attach_hr_weather_interactions(self, df: pd.DataFrame) -> pd.DataFrame:
+        feature_cols = [
+            'batter_pull_wind_mph',
+            'batter_oppo_wind_mph',
+            'batter_pull_air_carry',
+            'batter_pull_weather_boost',
+        ]
+        if df.empty:
+            for col in feature_cols:
+                df[col] = np.nan
+            return df
+
+        left_field = pd.to_numeric(df.get('wind_out_to_left_field_mph'), errors='coerce').fillna(0.0)
+        right_field = pd.to_numeric(df.get('wind_out_to_right_field_mph'), errors='coerce').fillna(0.0)
+        carry = pd.to_numeric(df.get('air_carry_factor'), errors='coerce').fillna(1.0)
+        roof_closed = pd.to_numeric(df.get('roof_closed_estimated'), errors='coerce').fillna(0.0)
+        roof_conf = pd.to_numeric(df.get('roof_status_confidence'), errors='coerce').fillna(0.0)
+        weather_avail = pd.to_numeric(df.get('weather_data_available'), errors='coerce').fillna(0.0)
+        bats_left = pd.to_numeric(df.get('batter_bats_left'), errors='coerce').fillna(0.0)
+        bats_right = pd.to_numeric(df.get('batter_bats_right'), errors='coerce').fillna(0.0)
+        switch = pd.to_numeric(df.get('batter_is_switch'), errors='coerce').fillna(0.0)
+
+        pull_wind = np.where(
+            bats_left > 0,
+            right_field,
+            np.where(bats_right > 0, left_field, (left_field + right_field) / 2.0)
+        )
+        oppo_wind = np.where(
+            bats_left > 0,
+            left_field,
+            np.where(bats_right > 0, right_field, (left_field + right_field) / 2.0)
+        )
+        switch_adjust = np.where(switch > 0, 0.9, 1.0)
+        exposure = weather_avail * (1.0 - (roof_closed * roof_conf))
+
+        df['batter_pull_wind_mph'] = np.round(pull_wind * switch_adjust, 3)
+        df['batter_oppo_wind_mph'] = np.round(oppo_wind * switch_adjust, 3)
+        df['batter_pull_air_carry'] = np.round(df['batter_pull_wind_mph'] * carry, 3)
+        df['batter_pull_weather_boost'] = np.round(df['batter_pull_air_carry'] * exposure, 3)
+        return df
+
     def save_dataset(self, df: pd.DataFrame, path: str = None):
         if path is None:
             path = str(Path(__file__).parent / 'complete_dataset.csv')
@@ -735,16 +1303,30 @@ class DatasetBuilder:
             picks_df = picks_df.merge(recent, on='batter_canonical', how='left')
         picks_df['opp_team'] = np.nan
         picks_df = self._attach_pitch_type_matchups(picks_df)
+        picks_df = self._attach_handedness_features(picks_df)
+        picks_df['game_date'] = pd.to_datetime(as_of_date).date()
+        picks_df = self._attach_lineup_context(picks_df)
         bvp_history = self._get_batter_vs_pitcher_history_for_date(as_of_date)
         if not bvp_history.empty:
             picks_df = picks_df.merge(bvp_history, on=['batter_canonical', 'pitcher_name'], how='left')
         picks_df = picks_df.drop(columns=[c for c in ('opp_team',) if c in picks_df.columns])
 
         picks_df = add_park_factors(picks_df, self.conn)
-        picks_df['wind_speed_mph']  = 0.0
-        picks_df['temp_f']          = 70.0
-        picks_df['precip_prob']     = 0.0
+        picks_df['wind_speed_mph'] = 0.0
+        picks_df['temp_f'] = 70.0
+        picks_df['precip_prob'] = 0.0
         picks_df['wind_out_factor'] = 1.0
+        picks_df['dew_point_f'] = 55.0
+        picks_df['air_carry_factor'] = 1.0
+        picks_df['wind_out_to_center_mph'] = 0.0
+        picks_df['wind_out_to_left_field_mph'] = 0.0
+        picks_df['wind_out_to_right_field_mph'] = 0.0
+        picks_df['wind_in_from_center_mph'] = 0.0
+        picks_df['crosswind_mph'] = 0.0
+        picks_df['roof_closed_estimated'] = 0.0
+        picks_df['roof_status_confidence'] = 0.0
+        picks_df['weather_data_available'] = 0.0
+        picks_df = self._attach_hr_weather_interactions(picks_df)
 
         picks_df = picks_df.drop(
             columns=[c for c in ('confidence_score', 'odds_decimal', 'batter_canonical') if c in picks_df.columns]
@@ -807,26 +1389,95 @@ class DatasetBuilder:
     def _get_recent_rates_for_date(self, as_of_date) -> pd.DataFrame:
         self.conn.rollback()
         cursor = self.conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute("""
-            SELECT pp.batter,
-                   COUNT(CASE WHEN pp.play_result = 'Home Run' THEN 1 END)::numeric /
-                       NULLIF(COUNT(*), 0) AS recent_hr_rate_14d,
-                   COUNT(CASE WHEN pp.play_result IN ('Single','Double','Triple','Home Run') THEN 1 END)::numeric /
-                       NULLIF(COUNT(*), 0) AS recent_hit_rate_14d,
-                   COUNT(CASE WHEN pp.play_result = 'Strikeout' THEN 1 END)::numeric /
-                       NULLIF(COUNT(*), 0) AS recent_so_rate_14d
-            FROM play_by_play_plays pp
-            JOIN games g ON pp.game_id = g.game_id
-            WHERE g.game_date >= %s::date - INTERVAL '14 days'
-              AND g.game_date <  %s::date
-              AND pp.batter IS NOT NULL
-            GROUP BY pp.batter
-        """, (as_of_date, as_of_date))
+        recency_sql = self._recent_rate_select_sql()
+        cursor.execute(f"""
+            WITH batter_games AS (
+                SELECT
+                    pp.batter,
+                    g.game_date,
+                    pp.game_id,
+                    MAX(CASE WHEN pp.play_result = 'Home Run' THEN 1 ELSE 0 END)::numeric AS hr_game,
+                    MAX(CASE WHEN pp.play_result IN ('Single','Double','Triple','Home Run') THEN 1 ELSE 0 END)::numeric AS hit_game,
+                    MAX(CASE WHEN pp.play_result = 'Strikeout' THEN 1 ELSE 0 END)::numeric AS so_game,
+                    COUNT(*) FILTER (
+                        WHERE pp.play_result <> 'Other'
+                          AND pp.play_result IS NOT NULL
+                    )::numeric AS pa_game
+                FROM play_by_play_plays pp
+                JOIN games g ON pp.game_id = g.game_id
+                WHERE g.game_date < %s::date
+                  AND pp.batter IS NOT NULL
+                GROUP BY pp.batter, g.game_date, pp.game_id
+            ),
+            ranked_games AS (
+                SELECT
+                    batter,
+                    game_date,
+                    hr_game,
+                    hit_game,
+                    so_game,
+                    pa_game,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY batter
+                        ORDER BY game_date DESC, game_id DESC
+                    ) AS rn
+                FROM batter_games
+            )
+            SELECT
+                batter,
+                MAX(game_date) AS last_game_date,
+                AVG(hr_game) AS season_hr_rate_to_date,
+                AVG(hit_game) AS season_hit_rate_to_date,
+                AVG(so_game) AS season_so_rate_to_date,
+                COUNT(*) AS season_games_prior,
+                SUM(pa_game) AS season_pa_prior,
+                {recency_sql}
+            FROM ranked_games
+            GROUP BY batter
+        """, (as_of_date, *self._recent_rate_query_params()))
         df = pd.DataFrame(cursor.fetchall())
         if df.empty:
             return df
         df['batter_canonical'] = df['batter'].apply(lambda n: self._canonical(n, 'play_by_play_recent_lookup'))
-        return df[['batter_canonical', 'recent_hr_rate_14d', 'recent_hit_rate_14d', 'recent_so_rate_14d']]
+        df['recent_form_lookback_games'] = self.recent_lookback_games
+        df['days_since_last_game'] = df['last_game_date'].apply(lambda d: self._days_since(as_of_date, d))
+        shrink_rows = []
+        for record in df.to_dict('records'):
+            shrink_rows.append(self._recent_shrinkage_features(record))
+        if shrink_rows:
+            shrink_df = pd.DataFrame(shrink_rows)
+            df = pd.concat([df.reset_index(drop=True), shrink_df.reset_index(drop=True)], axis=1)
+        keep_cols = [
+            'batter_canonical',
+            'recent_hr_rate_14d',
+            'recent_hit_rate_14d',
+            'recent_so_rate_14d',
+            'recent_form_lookback_games',
+            'recent_form_games_used',
+            'recent_form_pa_used',
+            'days_since_last_game',
+            'season_hr_rate_to_date',
+            'season_hit_rate_to_date',
+            'season_so_rate_to_date',
+            'season_games_prior',
+            'season_pa_prior',
+            'shrunk_recent_hr_rate',
+            'shrunk_recent_hit_rate',
+            'shrunk_recent_so_rate',
+            'recent_vs_season_hr_delta',
+            'recent_vs_season_hit_delta',
+            'recent_vs_season_so_delta',
+        ]
+        for window in RECENT_FORM_WINDOWS:
+            suffix = f"g{window}"
+            keep_cols.extend([
+                f'recent_hr_rate_{suffix}',
+                f'recent_hit_rate_{suffix}',
+                f'recent_so_rate_{suffix}',
+                f'recent_games_used_{suffix}',
+                f'recent_pa_used_{suffix}',
+            ])
+        return df[keep_cols]
 
     def _get_batter_vs_pitcher_history_for_date(self, as_of_date) -> pd.DataFrame:
         self.conn.rollback()
@@ -898,9 +1549,20 @@ class DatasetBuilder:
             'last_so_vs_pitcher',
         ]]
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Build hitter training dataset.")
+    parser.add_argument(
+        "--recent-lookback-games",
+        type=int,
+        default=DEFAULT_RECENT_LOOKBACK_GAMES,
+        help="Number of prior games to use for hitter recent-form rates.",
+    )
+    return parser.parse_args()
+
 
 if __name__ == '__main__':
-    builder = DatasetBuilder()
+    args = parse_args()
+    builder = DatasetBuilder(recent_lookback_games=args.recent_lookback_games)
     try:
         df = builder.build()
         if not df.empty:

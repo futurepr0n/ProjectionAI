@@ -29,18 +29,22 @@ This is the most important data pipeline in the repo right now.
 - Enriches with:
   - hitter EV / barrel / sweet spot
   - batter xStats
-  - recent 14-day rates
+  - recent-form rates that are moving from calendar-day windows to game-based lookbacks
   - opponent pitching 30-day rolling stats
   - hitter vs pitcher pitch-type matchup features
   - prior batter-vs-pitcher history
+  - handedness and lineup-slot context
   - park/travel features
-  - placeholder weather defaults
+  - historical weather from `historical_game_weather`
 
 Important newer behavior:
 
 - the PBP batter spine now cleans action-text suffixes out of batter names
 - `Unknown` placeholder batters are excluded from the hitter training spine
 - batter-team assignment prefers opposing pitcher team context over raw `inning_half`
+- weather is now backfilled per game, including estimated roof state, dew point, air-carry proxy, and wind components
+- HR training uses a reduced weather subset while Hit keeps the broader weather block
+- live serving now uses last-N-games hitter recent-form rates from `hitting_stats`, and the dashboard exposes that lookback as a user control
 
 Inference helpers also live here:
 
@@ -114,14 +118,30 @@ Important serving behavior:
 - dashboard results summary now separates hit rate from odds-aware ROI
 - if odds are unavailable, the summary shows ROI as `N/A` instead of implying a betting return
 - filter changes auto-refresh predictions; there is no longer a separate load button
+- `HR/Hit` controls include a recent-form lookback selector using last `5`, `10`, `15`, or `20` games
 - the historical stat cards are classification-aware
+- model/artifact metadata and runtime calibration are exposed through the API and dashboard tooltips
+- prediction cards can show a `Team?` warning badge when team validation remains suspicious
 - clicking a prediction card opens a modal with:
   - a per-row prediction summary
   - explanation components
   - row-level XGBoost driver summaries
   - result breakdown when the outcome exists
+  - weather details for hitter rows when available
 - some explanation components are intentionally matchup-level and can repeat across players in the same game
 - explanation formatting has been corrected for percentage-point fields such as `barrel_rate`
+- starter override controls now rerun hitter-side starter-dependent matchup features, not just the displayed pitcher name
+
+### 5a. Daily lineups ingestion
+
+Primary file: [data/fetch_daily_lineups.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/fetch_daily_lineups.py)
+
+This is the local replacement for the old server-only lineup scraper.
+
+- scrapes MLB's official `starting-lineups` page
+- parses game ID, venue, status, probable starters, and batting order
+- writes directly into `daily_lineups`
+- stores pitcher and lineup payloads as JSONB so the dashboard and dataset builders can reuse them
 
 ### 6. Batch prediction
 
@@ -178,6 +198,9 @@ Observed tables referenced in active code include:
 - `hellraiser_picks`
 - `stadiums`
 - `player_name_map`
+- `historical_game_weather`
+- `official_mlb_transactions`
+- `official_team_roster_snapshots`
 
 The repo currently contains hardcoded default DB connection values in active files. That is an operational and security smell and should be treated as technical debt.
 
@@ -201,6 +224,7 @@ When docs and code disagree, trust the code first.
 - [data/feature_engineering.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/feature_engineering.py)
 - [data/name_utils.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/name_utils.py)
 - [data/migrate_player_names.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/data/migrate_player_names.py)
+- [docs/HITTER_RECENCY_OPTIMIZATION_PLAN.md](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/docs/HITTER_RECENCY_OPTIMIZATION_PLAN.md)
 - [models/train_models_v4.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/models/train_models_v4.py)
 - [scripts/generate_daily_predictions.py](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/scripts/generate_daily_predictions.py)
 
@@ -211,7 +235,7 @@ When docs and code disagree, trust the code first.
 - `requirements.txt` has duplicate entries and may not be tightly curated.
 - The worktree is already dirty; do not assume a clean baseline.
 - Several top-level docs look stale relative to current code.
-- Weather features are still placeholder defaults in the newer dataset builder.
+- Historical weather is now wired in, but the richer weather block is not yet a clear HR win and still needs target-specific refinement.
 - The dashboard runtime on a no-DB path can still differ from the live DB-backed app because it falls back to local CSV datasets.
 - The hitter-side `label_so` path in `train_models_v4.py` should probably be retired or explicitly separated from the real starter strikeout product.
 

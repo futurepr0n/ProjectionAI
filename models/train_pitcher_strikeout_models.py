@@ -22,6 +22,115 @@ TARGETS = {
     'pitcher_so_6_plus': 'label_so_6_plus',
 }
 
+COMMON_FEATURES = [
+    'is_home',
+    'lineup_confirmed',
+    'opponent_lineup_size',
+    'starter_starts_30d',
+    'starter_avg_ip_30d',
+    'starter_avg_so_30d',
+    'starter_k_per_9_30d',
+    'starter_era_30d',
+    'starter_whip_30d',
+    'starter_avg_pitches_30d',
+    'starter_max_pitches_30d',
+    'starter_avg_batters_faced_30d',
+    'starter_k_percent_season',
+    'starter_bb_percent_season',
+    'starter_whiff_percent_season',
+    'opp_team_games_14d',
+    'opp_team_pa_per_game_14d',
+    'opp_team_k_rate_14d',
+    'opp_team_hits_per_pa_14d',
+]
+
+THRESHOLD_FEATURES = {
+    'pitcher_so_3_plus': COMMON_FEATURES + [
+        'starter_prior_starts_vs_opp',
+        'starter_prior_avg_pitches_vs_opp',
+        'starter_prior_avg_batters_faced_vs_opp',
+        'starter_days_since_last_vs_opp',
+        'starter_last_so_vs_opp',
+    ],
+    'pitcher_so_4_plus': COMMON_FEATURES + [
+        'starter_prior_starts_vs_opp',
+        'starter_prior_ip_vs_opp',
+        'starter_prior_so_vs_opp',
+        'starter_prior_k_per_9_vs_opp',
+        'starter_days_since_last_vs_opp',
+        'starter_last_so_vs_opp',
+        'starter_primary_pitch_usage',
+        'starter_primary_pitch_whiff_percent',
+        'starter_primary_pitch_k_percent',
+        'starter_secondary_pitch_usage',
+        'starter_secondary_pitch_whiff_percent',
+        'starter_secondary_pitch_k_percent',
+        'opp_team_k_vs_primary_pitch',
+        'opp_team_whiff_vs_primary_pitch',
+        'opp_team_k_vs_secondary_pitch',
+        'opp_team_whiff_vs_secondary_pitch',
+    ],
+    'pitcher_so_5_plus': COMMON_FEATURES + [
+        'starter_prior_starts_vs_opp',
+        'starter_prior_ip_vs_opp',
+        'starter_prior_so_vs_opp',
+        'starter_prior_k_per_9_vs_opp',
+        'starter_prior_avg_pitches_vs_opp',
+        'starter_prior_avg_batters_faced_vs_opp',
+        'starter_days_since_last_vs_opp',
+        'starter_last_so_vs_opp',
+        'starter_primary_pitch_usage',
+        'starter_primary_pitch_whiff_percent',
+        'starter_primary_pitch_k_percent',
+        'starter_primary_pitch_put_away',
+        'starter_secondary_pitch_usage',
+        'starter_secondary_pitch_whiff_percent',
+        'starter_secondary_pitch_k_percent',
+        'starter_secondary_pitch_put_away',
+        'starter_arsenal_whiff_percent',
+        'starter_arsenal_k_percent',
+        'starter_arsenal_put_away',
+        'opp_team_k_vs_primary_pitch',
+        'opp_team_whiff_vs_primary_pitch',
+        'opp_team_put_away_vs_primary_pitch',
+        'opp_team_k_vs_secondary_pitch',
+        'opp_team_whiff_vs_secondary_pitch',
+        'opp_team_put_away_vs_secondary_pitch',
+        'opp_team_k_vs_starter_arsenal',
+        'opp_team_whiff_vs_starter_arsenal',
+        'opp_team_put_away_vs_starter_arsenal',
+    ],
+    'pitcher_so_6_plus': COMMON_FEATURES + [
+        'starter_prior_starts_vs_opp',
+        'starter_prior_ip_vs_opp',
+        'starter_prior_so_vs_opp',
+        'starter_prior_k_per_9_vs_opp',
+        'starter_prior_avg_pitches_vs_opp',
+        'starter_prior_avg_batters_faced_vs_opp',
+        'starter_last_so_vs_opp',
+        'starter_primary_pitch_usage',
+        'starter_primary_pitch_whiff_percent',
+        'starter_primary_pitch_k_percent',
+        'starter_primary_pitch_put_away',
+        'starter_secondary_pitch_usage',
+        'starter_secondary_pitch_whiff_percent',
+        'starter_secondary_pitch_k_percent',
+        'starter_secondary_pitch_put_away',
+        'starter_arsenal_whiff_percent',
+        'starter_arsenal_k_percent',
+        'starter_arsenal_put_away',
+        'opp_team_k_vs_primary_pitch',
+        'opp_team_whiff_vs_primary_pitch',
+        'opp_team_put_away_vs_primary_pitch',
+        'opp_team_k_vs_secondary_pitch',
+        'opp_team_whiff_vs_secondary_pitch',
+        'opp_team_put_away_vs_secondary_pitch',
+        'opp_team_k_vs_starter_arsenal',
+        'opp_team_whiff_vs_starter_arsenal',
+        'opp_team_put_away_vs_starter_arsenal',
+    ],
+}
+
 
 def main() -> int:
     if not DATA_PATH.exists():
@@ -43,7 +152,9 @@ def main() -> int:
             continue
 
         logger.info("Training %s using %s", artifact_name, label_col)
-        results[artifact_name] = pipeline._train_pipeline(df, label_col, artifact_name)
+        feature_cols = [col for col in THRESHOLD_FEATURES[artifact_name] if col in df.columns]
+        logger.info("%s feature count: %s", artifact_name, len(feature_cols))
+        results[artifact_name] = pipeline._train_pipeline(df, label_col, artifact_name, feature_cols=feature_cols)
         logger.info(
             "%s holdout META AUC=%.4f",
             artifact_name,

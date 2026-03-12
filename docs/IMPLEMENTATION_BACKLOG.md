@@ -56,7 +56,7 @@ Purpose: track high-value improvements and check them off as they are implemente
   - alias collisions
   - rows that changed canonical mapping
 - [x] Add date-aware team history validation from official transaction / roster sources so team checks use game-date context, not just a static current `team_code`.
-- [ ] Surface a "possible team mismatch" badge in the app with a tooltip when a reviewed/allowed association still has unresolved team context.
+- [x] Surface a "possible team mismatch" badge in the app with a tooltip when a reviewed/allowed association still has unresolved team context.
 
 ## Data / Features
 
@@ -64,15 +64,22 @@ Purpose: track high-value improvements and check them off as they are implemente
   - sportsbook line / price history by prop type
   - keep odds-derived features optional so models remain stable when odds are unavailable
   - store source-availability flags so backtests can separate model signal from market signal
-- [ ] Replace placeholder weather defaults with real historical and game-time weather features.
+- [x] Replace placeholder weather defaults with real historical and game-time weather features.
 - [ ] Replace `pa_count` with a true pregame projection or lineup-context feature if it is being used for inference.
-- [ ] Add handedness splits for batter vs pitcher.
+- [x] Add handedness splits for batter vs pitcher.
 - [x] Add hitter pitch-type matchup features based on opposing pitcher arsenal and batter results versus pitch types.
-- [ ] Add projected lineup spot and expected plate appearances.
-- [ ] Add park/environment features that are directionally meaningful for HRs:
+- [x] Add projected lineup spot and expected plate appearances.
+- [x] Add a project-local MLB lineup ingester that writes directly into `daily_lineups` instead of relying on the old server-local JSON updater.
+- [x] Replace live hitter recent-form serving from calendar-day windows to last-N-games rates from `hitting_stats`.
+- [x] Expose a dashboard control so `HR/Hit` users can switch the live recent-form lookback between multiple game counts.
+- [ ] Optimize the new game-based hitter recent-form block so HR/Hit recover or exceed the older hitter-artifact quality.
+- [ ] Add multi-window hitter recent-form features (`3`, `5`, `10`, `20` games) plus sample-quality indicators.
+- [ ] Add shrinkage/blended hitter recency features against season baseline instead of relying on raw recent rates alone.
+- [ ] Make hitter recent-form feature selection target-specific so `HR` and `Hit` do not share the same final recency design by default.
+- [x] Add park/environment features that are directionally meaningful for HRs:
   - wind direction
-  - humidity
-  - roof open/closed state where applicable
+  - humidity / dew point
+  - estimated roof open/closed state where applicable
 - [ ] Add bullpen quality / opener-following context for pitcher matchup features.
 - [ ] Add stronger missingness handling:
   - presence indicators
@@ -115,15 +122,21 @@ Purpose: track high-value improvements and check them off as they are implemente
 - [x] Replace the current SO export/app path with a starter-based strikeout model instead of hitter-row strikeout proxies.
 - [x] Add strikeout-threshold selection so the dashboard/API/batch export can score `3+`, `4+`, `5+`, or `6+` starter strikeouts from the same dated starter dataset.
 - [ ] Decide whether the default strikeout view should stay `3+ K` or become sportsbook-line-aware per game/date.
-- [ ] Add a visible "possible team mismatch" badge/tooltip to prediction rows when alias resolution is allowed but historical team validation remains unresolved.
+- [x] Add a visible "possible team mismatch" badge/tooltip to prediction rows when alias resolution is allowed but historical team validation remains unresolved.
 - [ ] Unify signal logic so probabilities, thresholds, and rank-based labels are not competing systems.
 - [ ] Add experimental bankroll / position-sizing backtests:
   - flat staking
   - confidence-weighted staking
   - edge-weighted staking when odds are available
   - selection-first comparisons (top-N, confidence cutoffs, edge cutoffs)
-- [ ] Add model/artifact versioning to responses and generated output.
+- [x] Add model/artifact versioning to responses and generated output.
 - [ ] Add endpoint-level health checks for DB, dataset, and artifacts.
+- [ ] Refine target-specific weather usage further:
+  - keep broader weather context for Hit if it continues to help
+  - keep HR on a simpler weather subset unless a richer block improves holdout
+  - validate roof-status and park-orientation assumptions
+- [ ] Retrain HR/Hit artifacts on the new game-based recent-form features so offline training matches the updated live-serving logic.
+- [ ] Execute the plan in [docs/HITTER_RECENCY_OPTIMIZATION_PLAN.md](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/docs/HITTER_RECENCY_OPTIMIZATION_PLAN.md) and promote the best target-specific hitter recency design into production artifacts.
 
 ## Suggested Order
 

@@ -23,7 +23,7 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from name_utils import normalize_name
+from name_utils import normalize_name, normalize_to_canonical
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -47,6 +47,31 @@ TEAM_CODE_ALIASES = {
     'WSH': 'WSH',
     'ATH': 'OAK',
     'OAK': 'OAK',
+}
+
+PITCH_TYPE_ALIASES = {
+    'four-seam fb': 'FF',
+    '4-seam fb': 'FF',
+    'four-seam fastball': 'FF',
+    'ff': 'FF',
+    'sinker': 'SI',
+    'si': 'SI',
+    'slider': 'SL',
+    'sl': 'SL',
+    'sweeper': 'ST',
+    'st': 'ST',
+    'curve': 'CU',
+    'curveball': 'CU',
+    'cu': 'CU',
+    'changeup': 'CH',
+    'change-up': 'CH',
+    'ch': 'CH',
+    'cutter': 'FC',
+    'fc': 'FC',
+    'splitter': 'FS',
+    'fs': 'FS',
+    'slurve': 'SV',
+    'sv': 'SV',
 }
 
 
@@ -85,9 +110,15 @@ def _name_from_last_first(value: str) -> str:
     return text
 
 
+def _normalize_pitch_type(value: str) -> str:
+    text = str(value or '').strip().lower()
+    return PITCH_TYPE_ALIASES.get(text, str(value or '').strip().upper()[:2])
+
+
 class PitcherStrikeoutDatasetBuilder:
     def __init__(self):
         self.conn = self._connect()
+        self._canonical_cache: Dict[str, str] = {}
 
     def _connect(self):
         return psycopg2.connect(
@@ -101,6 +132,12 @@ class PitcherStrikeoutDatasetBuilder:
     def close(self):
         if self.conn:
             self.conn.close()
+
+    def _canonical(self, name: str, source: str = 'unknown') -> str:
+        cache_key = f"{source}::{name}"
+        if cache_key not in self._canonical_cache:
+            self._canonical_cache[cache_key] = normalize_to_canonical(name, self.conn)
+        return self._canonical_cache[cache_key]
 
     def build(self) -> pd.DataFrame:
         logger.info("Building starter strikeout dataset...")
@@ -513,6 +550,41 @@ class PitcherStrikeoutDatasetBuilder:
             """
         )
         arsenal_df = pd.DataFrame(cursor.fetchall())
+
+        cursor.execute(
+            """
+            WITH pitch_events AS (
+                SELECT
+                    pp.pitcher,
+                    CASE
+                        WHEN pp.inning_half = 'Top' THEN g.home_team
+                        ELSE g.away_team
+                    END AS pitcher_team,
+                    p.play_id,
+                    p.pitch_number,
+                    p.pitch_type,
+                    p.result,
+                    pp.play_result,
+                    ROW_NUMBER() OVER (PARTITION BY p.play_id ORDER BY p.pitch_number DESC, p.id DESC) AS reverse_pitch_rank
+                FROM play_by_play_pitches p
+                JOIN play_by_play_plays pp ON pp.id = p.play_id
+                JOIN games g ON g.game_id = pp.game_id
+                WHERE pp.pitcher IS NOT NULL
+                  AND p.pitch_type IS NOT NULL
+            )
+            SELECT
+                pitcher,
+                pitcher_team,
+                pitch_type,
+                COUNT(*) AS pitch_count,
+                AVG(CASE WHEN COALESCE(result, '') ILIKE '%%swing%%strike%%' THEN 1 ELSE 0 END) AS whiff_percent,
+                AVG(CASE WHEN reverse_pitch_rank = 1 AND play_result = 'Strikeout' THEN 1 ELSE 0 END) AS k_percent,
+                AVG(CASE WHEN reverse_pitch_rank = 1 AND play_result = 'Strikeout' THEN 1 ELSE 0 END) AS put_away
+            FROM pitch_events
+            GROUP BY pitcher, pitcher_team, pitch_type
+            """
+        )
+        fallback_arsenal_df = pd.DataFrame(cursor.fetchall())
         if arsenal_df.empty:
             for col in (
                 'starter_primary_pitch_usage',
@@ -539,15 +611,27 @@ class PitcherStrikeoutDatasetBuilder:
                 starter_df[col] = np.nan
             return starter_df
 
-        arsenal_df['starter_name_normalized'] = arsenal_df['last_name_first_name'].apply(
-            lambda value: normalize_name(_name_from_last_first(value))
+        if not fallback_arsenal_df.empty:
+            fallback_arsenal_df['last_name_first_name'] = fallback_arsenal_df['pitcher']
+            fallback_arsenal_df['team_name_alt'] = fallback_arsenal_df['pitcher_team']
+            fallback_arsenal_df['pitch_type'] = fallback_arsenal_df['pitch_type'].apply(_normalize_pitch_type)
+            fallback_arsenal_df['pitch_usage'] = pd.to_numeric(fallback_arsenal_df['pitch_count'], errors='coerce')
+            for col in ('whiff_percent', 'k_percent', 'put_away'):
+                fallback_arsenal_df[col] = pd.to_numeric(fallback_arsenal_df[col], errors='coerce')
+            fallback_arsenal_df = fallback_arsenal_df[[
+                'last_name_first_name', 'team_name_alt', 'pitch_type', 'pitch_usage', 'whiff_percent', 'k_percent', 'put_away'
+            ]]
+            arsenal_df = pd.concat([arsenal_df, fallback_arsenal_df], ignore_index=True)
+
+        arsenal_df['starter_canonical'] = arsenal_df['last_name_first_name'].apply(
+            lambda value: self._canonical(_name_from_last_first(value), 'pitcher_arsenal_starters')
         )
         arsenal_df['team_normalized'] = arsenal_df['team_name_alt'].apply(_normalize_team_code)
         for col in ('pitch_usage', 'whiff_percent', 'k_percent', 'put_away'):
             arsenal_df[col] = pd.to_numeric(arsenal_df[col], errors='coerce')
 
         starter_profiles: Dict[tuple, Dict[str, float]] = {}
-        for (starter_name, team_code), grp in arsenal_df.groupby(['starter_name_normalized', 'team_normalized'], dropna=False):
+        for (starter_name, team_code), grp in arsenal_df.groupby(['starter_canonical', 'team_normalized'], dropna=False):
             grp = grp.dropna(subset=['pitch_usage']).sort_values('pitch_usage', ascending=False).copy()
             if grp.empty:
                 continue
@@ -606,9 +690,10 @@ class PitcherStrikeoutDatasetBuilder:
         for idx, row in starter_df.iterrows():
             team_code = _normalize_team_code(row.get('team'))
             opponent_code = _normalize_team_code(row.get('opponent_team'))
-            profile = starter_profiles.get((row.get('starter_name_normalized'), team_code))
+            starter_canonical = self._canonical(row.get('starter_name', ''), 'starter_name_matchup')
+            profile = starter_profiles.get((starter_canonical, team_code))
             if profile is None:
-                profile = starter_profiles.get((row.get('starter_name_normalized'), None))
+                profile = starter_profiles.get((starter_canonical, None))
 
             primary_pitch = profile.get('primary_pitch_type') if profile else None
             secondary_pitch = profile.get('secondary_pitch_type') if profile else None
@@ -634,6 +719,8 @@ class PitcherStrikeoutDatasetBuilder:
 
             arsenal_records.append({
                 'row_index': idx,
+                'primary_pitch_type': primary_pitch,
+                'secondary_pitch_type': secondary_pitch,
                 'starter_primary_pitch_usage': profile.get('starter_primary_pitch_usage') if profile else np.nan,
                 'starter_primary_pitch_whiff_percent': profile.get('starter_primary_pitch_whiff_percent') if profile else np.nan,
                 'starter_primary_pitch_k_percent': profile.get('starter_primary_pitch_k_percent') if profile else np.nan,

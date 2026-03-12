@@ -20,6 +20,65 @@ logger = logging.getLogger(__name__)
 ARTIFACTS_DIR = Path(__file__).parent / 'artifacts'
 ARTIFACTS_DIR.mkdir(exist_ok=True)
 
+WEATHER_FEATURES = {
+    'wind_speed_mph',
+    'temp_f',
+    'precip_prob',
+    'wind_out_factor',
+    'dew_point_f',
+    'air_carry_factor',
+    'wind_out_to_center_mph',
+    'wind_in_from_center_mph',
+    'crosswind_mph',
+    'roof_closed_estimated',
+    'roof_status_confidence',
+    'weather_data_available',
+}
+
+TARGET_EXCLUDED_FEATURES = {
+    # The richer directional/carry weather fields helped Hit a bit, but they
+    # pulled HR holdout performance backward. Keep HR on a simpler weather set.
+    'hr': {
+        'precip_prob',
+        'dew_point_f',
+        'air_carry_factor',
+        'wind_out_to_center_mph',
+        'wind_out_to_left_field_mph',
+        'wind_out_to_right_field_mph',
+        'wind_in_from_center_mph',
+        'crosswind_mph',
+        'roof_status_confidence',
+        'batter_pull_wind_mph',
+        'batter_oppo_wind_mph',
+        'batter_pull_air_carry',
+        'batter_pull_weather_boost',
+        'recent_hit_rate_g3',
+        'recent_hit_rate_g5',
+        'recent_hit_rate_g10',
+        'recent_hit_rate_g20',
+        'recent_so_rate_g3',
+        'recent_so_rate_g5',
+        'recent_so_rate_g10',
+        'recent_so_rate_g20',
+        'shrunk_recent_hit_rate',
+        'shrunk_recent_so_rate',
+        'recent_vs_season_hit_delta',
+        'recent_vs_season_so_delta',
+        'season_hit_rate_to_date',
+        'season_so_rate_to_date',
+    },
+    # Hit benefits more from contact-form context than sparse HR burst fields.
+    'hit': {
+        'recent_hr_rate_g3',
+        'recent_hr_rate_g5',
+        'recent_hr_rate_g10',
+        'recent_hr_rate_g20',
+        'shrunk_recent_hr_rate',
+        'recent_vs_season_hr_delta',
+        'season_hr_rate_to_date',
+    },
+}
+
 
 def _safe_roc_auc(y_true: pd.Series, proba: np.ndarray) -> float:
     return float(roc_auc_score(y_true, proba)) if y_true.nunique() > 1 else float('nan')
@@ -51,16 +110,27 @@ def _positive_class_proba(model, X: pd.DataFrame) -> np.ndarray:
     return proba[:, 1].astype(float)
 
 
+def _signal_thresholds_from_proba(proba: np.ndarray) -> Dict[str, float]:
+    if len(proba) == 0:
+        return {'STRONG_BUY': float('nan'), 'BUY': float('nan'), 'MODERATE': float('nan'), 'AVOID': float('nan')}
+    return {
+        'STRONG_BUY': float(np.percentile(proba, 90)),
+        'BUY': float(np.percentile(proba, 75)),
+        'MODERATE': float(np.percentile(proba, 50)),
+        'AVOID': float(np.percentile(proba, 25)),
+    }
+
+
 class ModelPipeline:
 
-    def train_hr_model(self, df: pd.DataFrame) -> Dict:
-        return self._train_pipeline(df, 'label', 'hr')
+    def train_hr_model(self, df: pd.DataFrame, save_artifacts: bool = True) -> Dict:
+        return self._train_pipeline(df, 'label', 'hr', save_artifacts=save_artifacts)
 
-    def train_hit_model(self, df: pd.DataFrame) -> Dict:
-        return self._train_pipeline(df, 'label_hit', 'hit')
+    def train_hit_model(self, df: pd.DataFrame, save_artifacts: bool = True) -> Dict:
+        return self._train_pipeline(df, 'label_hit', 'hit', save_artifacts=save_artifacts)
 
-    def train_so_model(self, df: pd.DataFrame) -> Dict:
-        return self._train_pipeline(df, 'label_so', 'so')
+    def train_so_model(self, df: pd.DataFrame, save_artifacts: bool = True) -> Dict:
+        return self._train_pipeline(df, 'label_so', 'so', save_artifacts=save_artifacts)
 
     def _feature_columns(self, df: pd.DataFrame, label_col: str) -> List[str]:
         exclude_cols = {
@@ -77,6 +147,15 @@ class ModelPipeline:
             and not col.startswith('label_')
             and pd.api.types.is_numeric_dtype(df[col])
         ]
+
+    def _select_feature_columns(self, df: pd.DataFrame, label_col: str, name: str) -> List[str]:
+        feature_cols = self._feature_columns(df, label_col)
+        excluded = TARGET_EXCLUDED_FEATURES.get(name, set())
+        selected = [col for col in feature_cols if col not in excluded]
+        removed = sorted(set(feature_cols) - set(selected))
+        if removed:
+            logger.info("%s feature gating removed: %s", name.upper(), ", ".join(removed))
+        return selected
 
     def _temporal_holdout_split(
         self, X: pd.DataFrame, y: pd.Series, dates: pd.Series, holdout_frac: float = 0.2
@@ -172,11 +251,38 @@ class ModelPipeline:
             'brier_score': _safe_brier(y_true, proba),
         }
 
-    def _train_pipeline(self, df: pd.DataFrame, label_col: str, name: str) -> Dict:
+    def _tier_metrics(self, y_true: pd.Series, proba: np.ndarray) -> Dict[str, Dict[str, float]]:
+        thresholds = _signal_thresholds_from_proba(np.asarray(proba, dtype=float))
+        y_true = pd.Series(y_true).astype(int)
+        proba = pd.Series(proba, index=y_true.index, dtype=float)
+        tiers = {
+            'STRONG_BUY': proba >= thresholds['STRONG_BUY'],
+            'BUY': (proba >= thresholds['BUY']) & (proba < thresholds['STRONG_BUY']),
+            'MODERATE': (proba >= thresholds['MODERATE']) & (proba < thresholds['BUY']),
+            'AVOID': (proba >= thresholds['AVOID']) & (proba < thresholds['MODERATE']),
+        }
+        summary = {'thresholds': thresholds}
+        for tier, mask in tiers.items():
+            tier_y = y_true.loc[mask]
+            summary[tier] = {
+                'rows': int(mask.sum()),
+                'hit_rate': float(tier_y.mean()) if len(tier_y) else float('nan'),
+                'positive_count': int(tier_y.sum()) if len(tier_y) else 0,
+            }
+        return summary
+
+    def _train_pipeline(
+        self,
+        df: pd.DataFrame,
+        label_col: str,
+        name: str,
+        feature_cols: List[str] | None = None,
+        save_artifacts: bool = True,
+    ) -> Dict:
         logger.info(f"Training {name.upper()} model...")
 
         df = df.sort_values('game_date').reset_index(drop=True)
-        feature_cols = self._feature_columns(df, label_col)
+        feature_cols = feature_cols or self._select_feature_columns(df, label_col, name)
 
         mask = df[label_col].notna()
         X = df.loc[mask, feature_cols].copy()
@@ -268,6 +374,11 @@ class ModelPipeline:
             'lgb': self._metrics(y_holdout, holdout_lgb),
             'meta': self._metrics(y_holdout, holdout_meta),
         }
+        holdout_tiers = {
+            'xgb': self._tier_metrics(y_holdout, holdout_xgb),
+            'lgb': self._tier_metrics(y_holdout, holdout_lgb),
+            'meta': self._tier_metrics(y_holdout, holdout_meta),
+        }
 
         logger.info(
             "Holdout %s AUCs | XGB=%.4f LGB=%.4f META=%.4f",
@@ -277,31 +388,32 @@ class ModelPipeline:
             holdout_metrics['meta']['roc_auc'],
         )
 
-        final_xgb.save_model(str(ARTIFACTS_DIR / f'{name}_xgb.json'))
-        final_lgb.booster_.save_model(str(ARTIFACTS_DIR / f'{name}_lgb.txt'))
-        joblib.dump(
-            {
-                'meta': meta_model,
-                'features': feature_cols,
-                'train_medians': train_medians.to_dict(),
-                'training_metadata': {
-                    'target': name,
-                    'label_column': label_col,
-                    'train_rows': int(len(X_train)),
-                    'holdout_rows': int(len(X_holdout)),
-                    'train_start_date': str(train_dates.min().date()) if not train_dates.empty else None,
-                    'train_end_date': str(train_dates.max().date()) if not train_dates.empty else None,
-                    'holdout_start_date': str(holdout_dates.min().date()) if not holdout_dates.empty else None,
-                    'holdout_end_date': str(holdout_dates.max().date()) if not holdout_dates.empty else None,
-                    'cv_folds': fold_summaries,
-                    'cv_meta': cv_meta_metrics,
-                    'holdout_metrics': holdout_metrics,
-                }
-            },
-            str(ARTIFACTS_DIR / f'{name}_meta.pkl')
-        )
-
-        logger.info(f"Saved artifacts for {name}")
+        if save_artifacts:
+            final_xgb.save_model(str(ARTIFACTS_DIR / f'{name}_xgb.json'))
+            final_lgb.booster_.save_model(str(ARTIFACTS_DIR / f'{name}_lgb.txt'))
+            joblib.dump(
+                {
+                    'meta': meta_model,
+                    'features': feature_cols,
+                    'train_medians': train_medians.to_dict(),
+                    'training_metadata': {
+                        'target': name,
+                        'label_column': label_col,
+                        'train_rows': int(len(X_train)),
+                        'holdout_rows': int(len(X_holdout)),
+                        'train_start_date': str(train_dates.min().date()) if not train_dates.empty else None,
+                        'train_end_date': str(train_dates.max().date()) if not train_dates.empty else None,
+                        'holdout_start_date': str(holdout_dates.min().date()) if not holdout_dates.empty else None,
+                        'holdout_end_date': str(holdout_dates.max().date()) if not holdout_dates.empty else None,
+                        'cv_folds': fold_summaries,
+                        'cv_meta': cv_meta_metrics,
+                        'holdout_metrics': holdout_metrics,
+                        'holdout_tiers': holdout_tiers,
+                    }
+                },
+                str(ARTIFACTS_DIR / f'{name}_meta.pkl')
+            )
+            logger.info(f"Saved artifacts for {name}")
 
         return {
             'features': feature_cols,
@@ -316,6 +428,7 @@ class ModelPipeline:
             'cv_folds': fold_summaries,
             'cv_meta': cv_meta_metrics,
             'holdout_metrics': holdout_metrics,
+            'holdout_tiers': holdout_tiers,
             'auc': holdout_metrics['meta']['roc_auc'],
         }
 

@@ -23,8 +23,10 @@ The dashboard supports:
 - `HR` predictions
 - `Hit` predictions
 - `SO` predictions with a slider for `3+`, `4+`, `5+`, and `6+` strikeouts
+- `HR/Hit` recent-form control using last `5`, `10`, `15`, or `20` games
 - per-day team filtering
 - optional opponent inclusion for matchup review
+- starter override controls for hitter-side scenario analysis
 - cleaned results summaries that separate hit rate from odds-aware ROI
 - clickable card modals with per-prediction breakdowns
 - row-level XGBoost driver summaries for individual cards
@@ -44,6 +46,7 @@ ProjectionAI/
 │   ├── build_training_dataset.py
 │   ├── build_pitcher_strikeout_dataset.py
 │   ├── build_player_team_history.py
+│   ├── fetch_daily_lineups.py
 │   ├── migrate_player_names.py
 │   ├── name_utils.py
 │   ├── complete_dataset.csv
@@ -72,7 +75,11 @@ ProjectionAI/
   - cleaned play-by-play batter spine with `Unknown`/action-text rows removed
   - hitter pitch-type matchup features
   - prior batter-vs-pitcher history with leakage-safe cumulative features
+  - handedness and lineup-slot / projected-PA context
+  - historical game-weather backfill from `historical_game_weather`
+  - target-aware weather gating so `HR` and `Hit` do not consume the exact same weather feature bundle
   - faster team/date-based travel fatigue enrichment
+- live serving now replaces the old 14-day recent-form fallback with last-N-games rates from `hitting_stats`
 
 ### Starter Strikeouts
 
@@ -103,6 +110,7 @@ Important docs:
 
 - [docs/NAME_MATCHING_INVESTIGATION.md](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/docs/NAME_MATCHING_INVESTIGATION.md)
 - [docs/IMPLEMENTATION_BACKLOG.md](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/docs/IMPLEMENTATION_BACKLOG.md)
+- [docs/HITTER_RECENCY_OPTIMIZATION_PLAN.md](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/docs/HITTER_RECENCY_OPTIMIZATION_PLAN.md)
 
 ## Running Locally
 
@@ -135,6 +143,27 @@ source venv/bin/activate
 python data/build_training_dataset.py
 ```
 
+Fetch / refresh daily lineups into `daily_lineups`:
+
+```bash
+source venv/bin/activate
+python data/fetch_daily_lineups.py --date 2025-09-03
+```
+
+Backfill a date range:
+
+```bash
+source venv/bin/activate
+python data/fetch_daily_lineups.py --start-date 2025-03-27 --end-date 2025-09-28
+```
+
+Historical weather backfill:
+
+```bash
+source venv/bin/activate
+python data/backfill_historical_weather.py
+```
+
 Starter strikeout dataset:
 
 ```bash
@@ -165,11 +194,14 @@ Training is intended to be run from the terminal by a developer or agent. The da
 - prediction controls auto-refresh; there is no manual `Load Predictions` step
 - model training is not triggered from the UI; retraining is a terminal workflow
 - the historical stat cards reflect the currently selected classification scope
+- `HR/Hit` live scoring uses a user-selectable last-N-games recent-form window
+- hitter-side starter overrides rerun pitcher-dependent matchup features and rescore the slate
 - clicking a prediction card opens an individual modal with:
   - summary and classification context
   - underlying feature breakdown
   - model-driver breakdown for that exact row
   - result breakdown when available
+  - weather context where available for hitter props
 
 ### Generate batch predictions
 
@@ -191,6 +223,12 @@ python scripts/generate_daily_predictions.py 2025-09-02 --targets so --so-thresh
 
 Model artifacts are saved under `models/artifacts/`.
 
+Current verified holdout META AUCs after the latest weather-integrated retrain:
+
+- `HR`: `0.6850`
+- `Hit`: `0.6935`
+- legacy hitter-side `SO`: `0.5000` and should be treated as obsolete
+
 Important starter strikeout artifact prefixes:
 
 - `pitcher_so_3_plus`
@@ -209,9 +247,9 @@ Important starter strikeout artifact prefixes:
 
 See [docs/IMPLEMENTATION_BACKLOG.md](/Users/futurepr0n/Development/Capping.Pro/Github/ProjectionAI/docs/IMPLEMENTATION_BACKLOG.md), but the current highest-value open items are:
 
-- weather / park / environment improvements
+- target-specific weather refinement for HR vs Hit
 - threshold-specific feature gating and calibration work
 - sportsbook-optional odds ingestion for future Hit and SO seasons
 - calibration and betting-oriented backtesting
-- reviewed team-mismatch badges in the dashboard
+- deeper park-direction / roof-status refinement for weather features
 - deeper model-explanation quality beyond current XGBoost driver summaries
